@@ -1,0 +1,23 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "windows-vcpkg-msvc-debug",
+            "displayName": "Windows MSVC (Debug) with vcpkg",
+            "description": "Configures the project using the MSVC compiler and vcpkg.",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "C:/custom_programs/vcpkg/scripts/buildsystems/vcpkg.cmake",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "configurePreset": "windows-vcpkg-msvc-debug",
+            "displayName": "Build with MSVC (Debug)"
+        }
+    ]
+}

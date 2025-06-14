@@ -1,0 +1,9 @@
+Language: C
+BasedOnStyle: LLVM
+ColumnLimit: 100
+IndentWidth: 4
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+AlignAfterOpenBracket: BlockIndent
+BinPackParameters: AlwaysOnePerLine
