@@ -8,6 +8,8 @@
 
 #define INIT_VEC_CAPACITY 4
 
+/// @todo INTEGER OVERFLOW BUGS IN THIS FILE. Well it'll be mostly fine for regular use anyways.
+
 /// @brief Resizable array.
 typedef struct {
     void* data;
@@ -15,6 +17,7 @@ typedef struct {
     size_t len;
     size_t idx_size;
 } vector;
+
 
 /// @brief Creates a heap-allocated vector.
 /// @param idx_size sizeof() of an element.
