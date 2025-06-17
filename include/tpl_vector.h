@@ -3,12 +3,12 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h> // memcpy()
+#include "tpl_errors.h"
 
 #define INIT_VEC_CAPACITY 4
-
-/// @todo INTEGER OVERFLOW BUGS IN THIS FILE. Well it'll be mostly fine for regular use anyways.
 
 /// @brief Resizable array.
 typedef struct {
@@ -16,58 +16,129 @@ typedef struct {
     size_t capacity;
     size_t len;
     size_t idx_size;
-} vector;
-
+} vec;
 
 /// @brief Creates a heap-allocated vector.
 /// @param idx_size sizeof() of an element.
+/// @param vec_ptr Pointer.
 /// @return Pointer to a heap-allocated vector.
-static inline vector* vec_create(size_t idx_size) {
+static tpl_result vec_init(
+    const size_t idx_size,
+    vec** vec_ptr
+) {
+    vec* v          = NULL;
+    tpl_result code = TPL_SUCCESS;
+    if (vec_ptr == NULL) {
+        code = TPL_RECEIVED_NULL;
+        LOG_ERR(code);
+        goto error;
+    }
+    // A pointer that isn't NULL might have existing data.
+    if (*vec_ptr != NULL) {
+        code = TPL_OVERWRITE;
+        LOG_ERR(code);
+        goto error;
+    }
     if (idx_size == 0) {
-        return NULL;
+        code = TPL_INVALID_ARGUMENT;
+        LOG_ERR(code);
+        goto error;
     }
-    vector* v = (vector*)malloc(sizeof(vector));
+
+    v = malloc(sizeof(vec));
     if (v == NULL) {
-        return NULL;
+        code = TPL_ALLOC_FAILED;
+        LOG_ERR(code);
+        goto error;
     }
-    v->len = 0;
+
+    v->len      = 0;
     v->capacity = INIT_VEC_CAPACITY;
     v->idx_size = idx_size;
+    v->data     = NULL; // No-op when `free()`-ed. Allows easier clean-up in `error:`.
+
+    if (INIT_VEC_CAPACITY > SIZE_MAX / v->idx_size) {
+        code = TPL_OVERFLOW;
+        LOG_ERR(code);
+        goto error;
+    }
     void* mem_block = malloc(v->capacity * v->idx_size);
     if (mem_block == NULL) {
-        free(v);
-        return NULL;
+        code = TPL_ALLOC_FAILED;
+        LOG_ERR(code);
+        goto error;
     }
     v->data = mem_block;
-    return v;
+error:
+    if (code != TPL_SUCCESS) {
+        if (v) {
+            free(v->data);
+            free(v);
+            v = NULL;
+        }
+        return code;
+    }
+    *vec_ptr = v;
+    return code;
 }
 
-/// @brief Random access. Returns NULL in case of out-of-range.
+/// @brief Random access.
+/// @param vec Source vector.
+/// @param idx vector index.
+/// @param element A pointer that must point to a NULL pointer variable.
+/// @return Return code.
+static inline tpl_result vec_at(
+    vec* vec,
+    const size_t idx,
+    void** element
+) {
+    if (element == NULL || vec == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        *element = NULL;
+        return TPL_RECEIVED_NULL;
+    }
+    // A pointer that isn't NULL might have existing data.
+    if (*element != NULL) {
+        LOG_ERR(TPL_OVERWRITE);
+        *element = NULL;
+        return TPL_OVERWRITE;
+    }
+    if (vec->len <= idx) {
+        LOG_ERR(TPL_INDEX_ERROR);
+        *element = NULL;
+        return TPL_INDEX_ERROR;
+    }
+    *element = (char*)vec->data + idx * vec->idx_size;
+    return TPL_SUCCESS;
+}
+
+/// @brief Random access. Const variation.
 /// @param vec Source vector.
 /// @param idx vector index.
 /// @return A pointer to the specified index of the source vector.
-static inline void* vec_at(
-    vector* vec,
-    size_t idx
+static inline tpl_result vec_at_const(
+    const vec* vec,
+    const size_t idx,
+    const void** element
 ) {
-    if (vec == NULL || idx >= vec->len) {
-        return NULL;
+    if (element == NULL || vec == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        *element = NULL;
+        return TPL_RECEIVED_NULL;
     }
-    return (void*)((char*)vec->data + idx * vec->idx_size);
-}
-
-/// @brief Random access. Returns NULL in case of out-of-range. Const variation.
-/// @param vec Source vector.
-/// @param idx vector index.
-/// @return A pointer to the specified index of the source vector.
-static inline const void* vec_at_const(
-    const vector* vec,
-    size_t idx
-) {
-    if (vec == NULL || idx >= vec->len) {
-        return NULL;
+    // A pointer that isn't NULL might have existing data.
+    if (*element != NULL) {
+        LOG_ERR(TPL_OVERWRITE);
+        *element = NULL;
+        return TPL_OVERWRITE;
     }
-    return (const void*)((char*)vec->data + idx * vec->idx_size);
+    if (vec->len <= idx) {
+        LOG_ERR(TPL_INDEX_ERROR);
+        *element = NULL;
+        return TPL_INDEX_ERROR;
+    }
+    *element = (const char*)vec->data + idx * vec->idx_size;
+    return TPL_SUCCESS;
 }
 
 /// @brief Resize vector utility. Does nothing when target is smaller than
@@ -75,12 +146,16 @@ static inline const void* vec_at_const(
 /// @param vec Source vector.
 /// @param target Target capacity.
 /// @return A boolean signifying success or failure.
-static inline bool vec_ensure_capacity(
-    vector* vec,
-    size_t target
+static tpl_result vec_ensure_capacity(
+    vec* vec,
+    const size_t target
 ) {
-    if (vec->capacity >= target || vec->idx_size == 0) {
-        return true;
+    if (vec == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (vec->capacity >= target) {
+        return TPL_SUCCESS; // No-op.
     }
     size_t new_capacity = target;
     if (INIT_VEC_CAPACITY > new_capacity) {
@@ -95,63 +170,70 @@ static inline bool vec_ensure_capacity(
     new_capacity |= new_capacity >> 8;
     new_capacity |= new_capacity >> 16;
     new_capacity |= new_capacity >> 32;
-    new_capacity++;
-
-    // Overflowed allocation.
-    if (new_capacity > SIZE_MAX / vec->idx_size) {
-        return false;
+    if (new_capacity == 0xFFFFFFFFFFFFFFFF) {
+        return TPL_OVERFLOW;
     }
-
-    if (vec->data == NULL) {
-        return false;
+    new_capacity++;
+    if (new_capacity > SIZE_MAX / vec->idx_size) {
+        LOG_ERR(TPL_OVERFLOW);
+        return TPL_OVERFLOW;
     }
     void* mem_block = realloc(vec->data, new_capacity * vec->idx_size);
     if (mem_block == NULL) {
-        return false;
+        LOG_ERR(TPL_ALLOC_FAILED);
+        return TPL_ALLOC_FAILED;
     }
-    vec->data = mem_block;
+    vec->data     = mem_block;
     vec->capacity = new_capacity;
-    return true;
+    return TPL_SUCCESS;
 }
 
+#define vec_push(vec, element_ptr) vec_mulpush((vec), (element_ptr), 1)
 /// @brief Multiple push to a vector.
 /// @param vec Destination vector.
 /// @param data Data to be passed. Assumed to be the same size as
 /// `vec->idx_size`. MUST be the starting pointer. Undefined behavior otherwise.
 /// @param data_count Number of elements to be pushed.
-/// @return A boolean signifying success or failure.
-static inline bool vec_mulpush(
-    vector* vec,
+/// @return Return status.
+static tpl_result vec_mulpush(
+    vec* vec,
     const void* data,
-    size_t data_count
+    const size_t data_count
 ) {
-    size_t new_len = vec->len + data_count;
     if (vec == NULL || data == NULL) {
-        return false;
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
     }
     if (data_count == 0) {
-        return true;
+        return TPL_SUCCESS;
     }
+    if (data_count > SIZE_MAX - vec->len) {
+        LOG_ERR(TPL_OVERFLOW);
+        return TPL_OVERFLOW;
+    }
+    size_t new_len = vec->len + data_count;
     if (new_len > vec->capacity) {
-        bool realloc_result = vec_ensure_capacity(vec, new_len);
-        if (!realloc_result) {
-            return false;
+        tpl_result realloc_result = vec_ensure_capacity(vec, new_len);
+        if (realloc_result != TPL_SUCCESS) {
+            LOG_ERR(realloc_result);
+            return realloc_result;
         }
     }
     memcpy((void*)((char*)vec->data + vec->len * vec->idx_size), data, data_count * vec->idx_size);
     vec->len = new_len;
-    return true;
+    return TPL_SUCCESS;
 }
 
 /// @brief `free()` a heap-allocated vector, and set the pointer pointing to it
 /// to NULL.
 /// @param vec_ptr Pointer to the pointer of the target vector.
-static inline void vec_destroy(vector** vec_ptr) {
-    if (vec_ptr != NULL && *vec_ptr != NULL) {
-        free((*vec_ptr)->data);
-        free(*vec_ptr);
-        *vec_ptr = NULL;
+static inline void vec_destroy(vec** vec_ptr) {
+    if (vec_ptr == NULL || *vec_ptr == NULL) {
+        return;
     }
+    free((*vec_ptr)->data);
+    free(*vec_ptr);
+    *vec_ptr = NULL;
 }
 
 #endif

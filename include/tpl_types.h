@@ -2,15 +2,11 @@
 #define TERMIPLAY_TYPES
 
 #define NULL_DEVICE "nul"
+#include <windows.h>
+#include <stddef.h>
 
-typedef enum {
-    TPL_SUCCESS = 0,
-    TPL_GENERIC_ERROR = 1,
-    TPL_FAILED_TO_GET_PATH = 2,
-    TPL_TRUNCATED_PATH = 3,
-    TPL_INCOMPATIBLE_VEC = 4,
-    TPL_INVALID_PATH = 5,
-    TPL_RECEIVED_NULL = 6
-} tpl_result;
+typedef wchar_t tpl_wchar;
+typedef DWORD tpl_win_u32;
+typedef HRESULT tpl_win_result;
 
 #endif

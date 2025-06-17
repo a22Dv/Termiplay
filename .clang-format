@@ -6,3 +6,15 @@ DerivePointerAlignment: false
 PointerAlignment: Left
 AlignAfterOpenBracket: BlockIndent
 BinPackParameters: AlwaysOnePerLine
+AlignConsecutiveAssignments: true
+AlignConsecutiveBitFields: true
+
+SortIncludes: true
+IncludeCategories:
+  # Avoids linking errors due to the configuration stuff <windows.h> does that other headers need.
+  - Regex:           '^<[Ww]indows\.h>'
+    Priority:        1
+  - Regex:           '^<.*>'
+    Priority:        2
+  - Regex:           '^".*>'
+    Priority:        3
