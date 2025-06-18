@@ -3,10 +3,10 @@
 
 #include <Windows.h>
 #include <PathCch.h>
-#include <stdbool.h>
 #include "tpl_errors.h"
 #include "tpl_string.h"
 #include "tpl_types.h"
+#include <stdbool.h>
 
 typedef wstring wpath;
 
@@ -102,7 +102,7 @@ static tpl_result wpath_resolve_path(const wpath* path, wpath** buffer) {
         return TPL_OVERWRITE;
     }
     tpl_wchar temp_buffer[MAX_PATH];
-    tpl_win_u32 len = GetFullPathNameW(wstr_c(path), MAX_PATH, temp_buffer, NULL);
+    tpl_win_u32 len = GetFullPathNameW(wstr_c_const(path), MAX_PATH, temp_buffer, NULL);
     if (len == 0) {
         LOG_ERR(TPL_FAILED_TO_RESOLVE_PATH);
         return TPL_FAILED_TO_RESOLVE_PATH;
@@ -143,7 +143,7 @@ static tpl_result wpath_join_path(const wpath* path_src, const wpath* path_more,
         return TPL_OVERWRITE;
     }
     tpl_wchar temp_buffer[MAX_PATH];
-    tpl_win_result join_result = PathCchCombine(temp_buffer, MAX_PATH, wstr_c(path_src), wstr_c(path_more));
+    tpl_win_result join_result = PathCchCombine(temp_buffer, MAX_PATH, wstr_c_const(path_src), wstr_c_const(path_more));
     if (FAILED(join_result)) {
         LOG_ERR(TPL_FAILED_TO_GET_PATH);
         return TPL_FAILED_TO_GET_PATH;
@@ -174,7 +174,7 @@ static tpl_result wpath_get_parent_path(const wpath* path, wpath** buffer) {
         return TPL_OVERWRITE;
     }
     tpl_wchar temp_buffer[MAX_PATH];
-    errno_t cpy_res = wcscpy_s(temp_buffer, MAX_PATH, wstr_c(path));
+    errno_t cpy_res = wcscpy_s(temp_buffer, MAX_PATH, wstr_c_const(path));
     if (cpy_res != 0) {
         LOG_ERR(TPL_INVALID_PATH);
         return TPL_INVALID_PATH;

@@ -17,7 +17,7 @@ typedef struct {
 
 /// @brief Creates a string.
 /// @return A pointer to a heap-allocated string.
-static inline tpl_result str_init(string** buffer) {
+static tpl_result str_init(string** buffer) {
     tpl_result return_code = TPL_SUCCESS;
     string* str            = NULL;
     vec* v                 = NULL;
@@ -61,7 +61,7 @@ error:
 }
 /// @brief Creates a wide string.
 /// @return A pointer to a heap-allocated wide string.
-static inline tpl_result wstr_init(wstring** buffer) {
+static tpl_result wstr_init(wstring** buffer) {
     tpl_result return_code = TPL_SUCCESS;
     if (buffer == NULL) {
         return_code = TPL_RECEIVED_NULL;
@@ -126,7 +126,7 @@ static inline tpl_result wstr_ensure_capacity(
 /// @param str String
 /// @param data char* to characters.
 /// @return Return status
-static inline tpl_result str_mulpush(
+static tpl_result str_mulpush(
     string* str,
     const char* data
 ) {
@@ -163,7 +163,7 @@ static inline tpl_result str_mulpush(
 /// @param wstr Wide string destination.
 /// @param data Data to be pushed.
 /// @return Return status
-static inline tpl_result wstr_mulpush(
+static tpl_result wstr_mulpush(
     wstring* wstr,
     const tpl_wchar* data
 ) {
@@ -219,7 +219,7 @@ static inline char* str_c(string* str) {
 /// @brief Returns the internal tpl_wchar* array.
 /// @param wstr Wide string.
 /// @return Pointer to wstr's internal buffer. else NULL.
-static inline const tpl_wchar* wstr_c_const(wstring* wstr) {
+static inline const tpl_wchar* wstr_c_const(const wstring* wstr) {
     if (wstr == NULL) {
         return NULL;
     }
@@ -229,22 +229,11 @@ static inline const tpl_wchar* wstr_c_const(wstring* wstr) {
 /// @brief Returns the internal char* array.
 /// @param str Wide string.
 /// @return Pointer to str's internal buffer. else NULL.
-static inline const char* str_c_const(string* str) {
+static inline const char* str_c_const(const string* str) {
     if (str == NULL) {
         return NULL;
     }
     return (const char*)str->buffer->data;
-}
-
-/// @brief `free()` a string.
-/// @param str_ptr String.
-static inline void str_destroy(string** str_ptr) {
-    if (str_ptr == NULL) {
-        return;
-    }
-    vec_destroy(&((*str_ptr)->buffer));
-    free(*str_ptr);
-    *str_ptr = NULL;
 }
 
 /// @brief `free()` a wide string.
@@ -257,4 +246,5 @@ static inline void wstr_destroy(wstring** wstr_ptr) {
     free(*wstr_ptr);
     *wstr_ptr = NULL;
 }
+
 #endif

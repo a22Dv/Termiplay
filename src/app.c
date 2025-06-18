@@ -1,10 +1,24 @@
 #include <stdio.h>
 #include "tpl_app.h"
 #include "tpl_errors.h"
+#include "tpl_path.h"
 
-tpl_result start_execution(int argc, char** argv) {
-    return TPL_ALLOC_FAILED;
-
+tpl_result start_execution(wpath* video_path) {
+    // Check path validity.
+    wpath* resolved_path = NULL;
+    tpl_result resolve_call = wpath_resolve_path(video_path, &resolved_path);
+    if (tpl_failed(resolve_call)) {
+        fprintf(stderr, "Path cannot be resolved.\n");
+        LOG_ERR(resolve_call);
+        return resolve_call;
+    }
+    bool exists = wpath_exists(resolved_path);
+    if (!exists) {
+        fprintf(stderr, "File does not exist or cannot be found.\n");
+        LOG_ERR(TPL_INVALID_ARGUMENT);
+        return TPL_INVALID_ARGUMENT;
+    }
+    
     // -----------------MUST DO--------------------
     // Make sure argv[1] is a valid path to a video
     // Make sure the video is in a supported format
