@@ -1,8 +1,8 @@
 #ifndef TERMIPLAY_ERRORS
 #define TERMIPLAY_ERRORS
 
+#include <stdbool.h>
 #include <stdio.h>
-#define DEBUG
 #ifdef DEBUG
 #define LOG_ERR(err)                                                                               \
     do {                                                                                           \
@@ -27,21 +27,28 @@
     X(TPL_ALLOC_FAILED, "MEMORY ALLOCATION FAILURE")                                               \
     X(TPL_INDEX_ERROR, "INDEX OUT OF BOUNDS")                                                      \
     X(TPL_OVERFLOW, "VALUE OVERFLOW")                                                              \
-    X(TPL_OVERWRITE, "INVALID NON-NULL POINTER. MEMORY LEAK/OVERWRITE POSSIBLE.")
+    X(TPL_OVERWRITE, "INVALID NON-NULL POINTER. MEMORY LEAK/OVERWRITE POSSIBLE.")                  \
+    X(TPL_FAILED_TO_RESOLVE_PATH, "FAILED TO RESOLVE PATH")
 
 typedef enum {
-    #define X(value, string) value,
+#define X(value, string) value,
     RESULT_LIST
-    #undef X
+#undef X
 } tpl_result;
 
 static inline const char* err_str(tpl_result status_code) {
     switch (status_code) {
-    #define X(value, string)  case value: return string;
-    RESULT_LIST
-    #undef X
+#define X(value, string)                                                                           \
+    case value:                                                                                    \
+        return string;
+        RESULT_LIST
+#undef X
     default:
         return "UNHANDLED ERROR CODE";
     }
 }
+
+
+/// @brief Simply `return_code != TPL_SUCCESS`.
+static inline const bool tpl_failed(tpl_result return_code) { return return_code != TPL_SUCCESS; }
 #endif

@@ -70,7 +70,7 @@ static tpl_result vec_init(
     }
     v->data = mem_block;
 error:
-    if (code != TPL_SUCCESS) {
+    if (tpl_failed(code)) {
         if (v) {
             free(v->data);
             free(v);
@@ -214,7 +214,7 @@ static tpl_result vec_mulpush(
     size_t new_len = vec->len + data_count;
     if (new_len > vec->capacity) {
         tpl_result realloc_result = vec_ensure_capacity(vec, new_len);
-        if (realloc_result != TPL_SUCCESS) {
+        if (tpl_failed(realloc_result)) {
             LOG_ERR(realloc_result);
             return realloc_result;
         }

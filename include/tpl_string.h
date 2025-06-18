@@ -17,7 +17,7 @@ typedef struct {
 
 /// @brief Creates a string.
 /// @return A pointer to a heap-allocated string.
-static inline tpl_result str_create(string** buffer) {
+static inline tpl_result str_init(string** buffer) {
     tpl_result return_code = TPL_SUCCESS;
     string* str            = NULL;
     vec* v                 = NULL;
@@ -39,14 +39,14 @@ static inline tpl_result str_create(string** buffer) {
         goto error;
     }
     tpl_result init_result = vec_init(sizeof(char), &v);
-    if (init_result != TPL_SUCCESS) {
+    if (tpl_failed(init_result)) {
         return_code = init_result;
         LOG_ERR(return_code);
         goto error;
     }
     ((char*)v->data)[0] = '\0';
 error:
-    if (return_code != TPL_SUCCESS) {
+    if (tpl_failed(return_code)) {
         if (str) {
             free(str);
         }
@@ -61,7 +61,7 @@ error:
 }
 /// @brief Creates a wide string.
 /// @return A pointer to a heap-allocated wide string.
-static inline tpl_result wstr_create(wstring** buffer) {
+static inline tpl_result wstr_init(wstring** buffer) {
     tpl_result return_code = TPL_SUCCESS;
     if (buffer == NULL) {
         return_code = TPL_RECEIVED_NULL;
@@ -82,14 +82,13 @@ static inline tpl_result wstr_create(wstring** buffer) {
         goto error;
     }
     tpl_result init_result = vec_init(sizeof(tpl_wchar), &v);
-    if (init_result != TPL_SUCCESS) {
+    if (tpl_failed(init_result)) {
         return_code = init_result;
-        LOG_ERR(return_code);
         goto error;
     }
     ((tpl_wchar*)v->data)[0] = L'\0';
 error:
-    if (return_code != TPL_SUCCESS) {
+    if (tpl_failed(return_code)) {
         if (wstr) {
             free(wstr);
         }
@@ -149,7 +148,7 @@ static inline tpl_result str_mulpush(
     if (str->buffer->capacity < str->buffer->len + data_count + 1) {
         ensure_result = str_ensure_capacity(str, str->buffer->len + data_count);
     }
-    if (ensure_result != TPL_SUCCESS) {
+    if (tpl_failed(ensure_result)) {
         LOG_ERR(ensure_result);
         return ensure_result;
     }
@@ -186,7 +185,7 @@ static inline tpl_result wstr_mulpush(
     if (wstr->buffer->capacity < wstr->buffer->len + data_count + 1) {
         ensure_result = wstr_ensure_capacity(wstr, wstr->buffer->len + data_count);
     }
-    if (ensure_result != TPL_SUCCESS) {
+    if (tpl_failed(ensure_result)) {
         LOG_ERR(ensure_result);
         return ensure_result;
     }
