@@ -28,7 +28,8 @@
     X(TPL_INDEX_ERROR, "INDEX OUT OF BOUNDS")                                                      \
     X(TPL_OVERFLOW, "VALUE OVERFLOW")                                                              \
     X(TPL_OVERWRITE, "INVALID NON-NULL POINTER. MEMORY LEAK/OVERWRITE POSSIBLE.")                  \
-    X(TPL_FAILED_TO_RESOLVE_PATH, "FAILED TO RESOLVE PATH")
+    X(TPL_FAILED_TO_RESOLVE_PATH, "FAILED TO RESOLVE PATH")                                        \
+    X(TPL_FAILED_TO_PARSE, "FAILED TO PARSE")
 
 typedef enum {
 #define X(value, string) value,
@@ -47,7 +48,6 @@ static inline const char* err_str(tpl_result status_code) {
         return "UNHANDLED ERROR CODE";
     }
 }
-
 
 /// @brief Simply `return_code != TPL_SUCCESS`.
 static inline const bool tpl_failed(tpl_result return_code) { return return_code != TPL_SUCCESS; }

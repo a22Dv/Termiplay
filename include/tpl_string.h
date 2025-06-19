@@ -15,6 +15,28 @@ typedef struct {
     vec* buffer;
 } wstring;
 
+/// @brief `free()` a wide string.
+/// @param str_ptr Wide string.
+static inline void str_destroy(string** str_ptr) {
+    if (str_ptr == NULL || *str_ptr == NULL) {
+        return;
+    }
+    vec_destroy(&((*str_ptr)->buffer));
+    free(*str_ptr);
+    *str_ptr = NULL;
+}
+
+/// @brief `free()` a wide string.
+/// @param wstr_ptr Wide string.
+static inline void wstr_destroy(wstring** wstr_ptr) {
+    if (wstr_ptr == NULL || *wstr_ptr == NULL) {
+        return;
+    }
+    vec_destroy(&((*wstr_ptr)->buffer));
+    free(*wstr_ptr);
+    *wstr_ptr = NULL;
+}
+
 /// @brief Creates a string.
 /// @return A pointer to a heap-allocated string.
 static tpl_result str_init(string** buffer) {
@@ -236,15 +258,54 @@ static inline const char* str_c_const(const string* str) {
     return (const char*)str->buffer->data;
 }
 
-/// @brief `free()` a wide string.
-/// @param wstr_ptr Wide string.
-static inline void wstr_destroy(wstring** wstr_ptr) {
-    if (wstr_ptr == NULL) {
-        return;
+static tpl_result wstr_to_utf8(
+    const wstring* input_path,
+    string** output_buffer
+) {
+    if (input_path == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
     }
-    vec_destroy(&((*wstr_ptr)->buffer));
-    free(*wstr_ptr);
-    *wstr_ptr = NULL;
+    if (output_buffer == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (*output_buffer != NULL) {
+        LOG_ERR(TPL_OVERWRITE);
+        return TPL_OVERWRITE;
+    }
+    string* buf       = NULL;
+    tpl_result init_call = str_init(&buf);
+    if (tpl_failed(init_call)) {
+        LOG_ERR(init_call);
+        return init_call;
+    }
+    int buf_size =
+        WideCharToMultiByte(CP_UTF8, 0, wstr_c_const(input_path), -1, NULL, 0, NULL, NULL);
+    if (buf_size == 0) {
+        str_destroy(&buf);
+        LOG_ERR(TPL_FAILED_TO_PARSE);
+        return TPL_FAILED_TO_PARSE;
+    }
+    tpl_result capc_call = str_ensure_capacity(buf, (size_t)buf_size);
+    if (tpl_failed(capc_call)) {
+        str_destroy(&buf);
+        LOG_ERR(capc_call);
+        return capc_call;
+    }
+    int conv = WideCharToMultiByte(
+        CP_UTF8, 0, wstr_c_const(input_path), -1, str_c(buf), buf->buffer->capacity, NULL, NULL
+    );
+    if (conv == 0) {
+        str_destroy(&buf);
+        LOG_ERR(TPL_FAILED_TO_PARSE);
+        return TPL_FAILED_TO_PARSE;
+    }
+    buf->buffer->len = (size_t)(conv - 1);
+    *output_buffer   = buf;
+    return TPL_SUCCESS;
 }
+
+
 
 #endif

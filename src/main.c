@@ -2,6 +2,8 @@
 // #define TESTING
 
 #ifndef TESTING
+#include <fcntl.h>
+#include <io.h>
 #include "tpl_app.h"
 #include "tpl_errors.h"
 #include "tpl_path.h"
@@ -16,22 +18,24 @@ int wmain(
     wchar_t** argv
 ) {
 #ifndef TESTING
+    SetConsoleOutputCP(CP_UTF8);
     if (argc != 2) {
         LOG_ERR(TPL_INVALID_ARGUMENT);
         fprintf(stderr, "Expected 2 arguments. Got %i.\n", argc);
         return TPL_INVALID_ARGUMENT;
     }
-    wpath* video_path = NULL;
+    wpath* video_path    = NULL;
     tpl_result init_call = wpath_init(&video_path, argv[1]);
     if (tpl_failed(init_call)) {
         LOG_ERR(init_call);
         fprintf(stderr, "%s\n", err_str(init_call));
         return init_call;
     }
-    tpl_result exec_result = start_execution(video_path);
-    if (tpl_failed(exec_result)) {
-        LOG_ERR(exec_result);
-        return exec_result;
+    tpl_result exec_call = start_execution(video_path);
+    if (tpl_failed(exec_call)) {
+        fprintf(stderr, "%s\n", err_str(exec_call));
+        LOG_ERR(exec_call);
+        return exec_call;
     }
     return TPL_SUCCESS;
 #else
