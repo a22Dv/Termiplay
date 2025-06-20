@@ -1,7 +1,14 @@
+#include "tpl_audio.h"
 #include "tpl_player.h"
+#include "tpl_proc.h"
+#include "tpl_video.h"
 #include "yaml.h"
 #define DEBUG
 #define SETTING_KEYS 7
+
+#define TPL_AUDIO_THREAD 1
+#define TPL_VIDEO_THREAD 2
+#define TPL_PROC_THREAD 3
 
 tpl_result tpl_player_init(
     wpath*            video_fpath,
@@ -47,11 +54,6 @@ tpl_result tpl_player_init(
     return TPL_SUCCESS;
 }
 
-/// @note DUE FOR A REFACTOR. Table-approach. Somewhat urgent.
-/// @brief Sets a given configuration.
-/// @param pl_config Player config.
-/// @param write_pending_flag Flag to toggle for multi-threaded environments.
-/// @return Return code.
 tpl_result tpl_player_setconf(
     tpl_player_conf* pl_config,
     volatile LONG*   write_pending_flag
@@ -260,7 +262,7 @@ tpl_result tpl_player_setconf(
     pl_config->gray_scale      = grayscale;
     pl_config->preserve_aspect = preserve_aspect;
     pl_config->rgb_out         = rgb_out;
-    char_preset1 = NULL; // Moved pointer.
+    char_preset1               = NULL; // Moved pointer.
 
 cleanup:
     str_destroy(&char_preset1);
@@ -278,6 +280,56 @@ cleanup:
     return return_code;
 }
 
+tpl_result tpl_player_setstate(tpl_player_state** pl_state) {
+    if (pl_state == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (*pl_state != NULL) {
+        LOG_ERR(TPL_OVERWRITE);
+        return TPL_OVERWRITE;
+    }
+    tpl_player_state* temp_pl_state = malloc(sizeof(tpl_player_state));
+    if (temp_pl_state == NULL) {
+        LOG_ERR(TPL_ALLOC_FAILED);
+        return TPL_ALLOC_FAILED;
+    }
+    temp_pl_state->looping           = false;
+    temp_pl_state->main_clock        = 0.0;
+    temp_pl_state->muted             = false;
+    temp_pl_state->playing           = true;
+    temp_pl_state->preset_idx        = 0;
+    temp_pl_state->seek_multiple_idx = 10.0;
+    temp_pl_state->seeking           = false;
+    temp_pl_state->vol_lvl           = 0.5;
+    InitializeSRWLock(&temp_pl_state->srw_lock);
+
+    *pl_state = temp_pl_state;
+    return TPL_SUCCESS;
+}
+
 tpl_result tpl_player_start(tpl_player_conf** pl_state) { return TPL_SUCCESS; }
 
 void tpl_player_destroy(tpl_player_conf** pl_state) {}
+
+
+// You gotta include the volatile boolean flag pointers into the data.TODO
+unsigned __stdcall tpl_start_thread(void* data) {
+    tpl_thread_data* thread_data = (tpl_thread_data*)data;
+    tpl_result       return_code = TPL_SUCCESS;
+    switch (thread_data->thread_id) {
+    case TPL_AUDIO_THREAD:
+        return_code = tpl_execute_audio_thread(thread_data);
+        break;
+    case TPL_VIDEO_THREAD:
+        return_code = tpl_execute_video_thread(thread_data);
+        break;
+    case TPL_PROC_THREAD:
+        return_code = tpl_execute_proc_thread(thread_data);
+        break;
+    default:
+        return_code = TPL_INVALID_ARGUMENT;
+        break;
+    }
+    return return_code;
+}

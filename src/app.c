@@ -3,6 +3,7 @@
 #include <Windows.h>
 #include <stdio.h>
 #include "tpl_app.h"
+#include "tpl_audio.h"
 #include "tpl_errors.h"
 #include "tpl_ffmpeg_utils.h"
 #include "tpl_input.h"
@@ -51,8 +52,14 @@ tpl_result start_execution(wpath* video_path) {
     }
 
     // Player initialization.
-    tpl_player_conf* temp_pl_config = NULL;
-    volatile LONG    temp_conf_flag = false;
+    tpl_player_state* temp_pl_state   = NULL;
+    tpl_player_conf*  temp_pl_config  = NULL;
+    volatile LONG     temp_conf_flag  = false;
+    const uint16_t    polling_rate_ms = 50;
+    // 20 seek speed levels.
+    const int16_t seek_multiple_table[20] = {-900, -600, -480, -360, -300, -240, -120,
+                                             -60,  -30,  -10,  10,   30,   60,   120,
+                                             240,  300,  360,  480,  600,  900};
 
     tpl_result init_pcall = tpl_player_init(resolved_path, config_path, &temp_pl_config);
     if (tpl_failed(init_pcall)) {
@@ -64,37 +71,28 @@ tpl_result start_execution(wpath* video_path) {
         LOG_ERR(set_conf_call);
         return set_conf_call;
     }
-
-    const uint16_t polling_rate_ms = 50;
-    // 20 seek speed levels.
-    const int16_t seek_multiple_table[20] = {-900, -600, -480, -360, -300, -240, -120,
-                                             -60,  -30,  -10,  10,   30,   60,   120,
-                                             240,  300,  360,  480,  600,  900};
+    tpl_result set_state_call = tpl_player_setstate(&temp_pl_state);
+    if (tpl_failed(set_state_call)) {
+        LOG_ERR(set_state_call);
+        return set_state_call;
+    }
 
     // Player state and flags.
-    tpl_player_conf* pl_config = temp_pl_config;
-    temp_pl_config             = NULL; // Moved pointer.
-    tpl_player_state pl_state  = {
-         .looping           = false,
-         .master_pts        = 0.0,
-         .muted             = false,
-         .playing           = true,
-         .preset_idx        = 0,
-         .seek_multiple_idx = 10.0,
-         .seeking           = false,
-         .vol_lvl           = 0.5,
-         .srw_lock          = SRWLOCK_INIT
-    };
+    tpl_player_conf* pl_config       = temp_pl_config;
+    temp_pl_config                   = NULL; // Moved pointer.
+    tpl_player_state* pl_state       = temp_pl_state;
+    temp_pl_state                    = NULL; // Moved pointer.
     volatile LONG writer_pconf_flag  = false;
     volatile LONG shutdown           = false;
     volatile LONG writer_pstate_flag = false;
     uint8_t       key_code           = 0;
 
+
     // Main loop.
     while (true) {
         key_code             = tpl_poll_input();
         tpl_result proc_call = tpl_proc_input(
-            key_code, polling_rate_ms, &pl_state, pl_config, &shutdown, &writer_pconf_flag,
+            key_code, polling_rate_ms, pl_state, pl_config, &shutdown, &writer_pconf_flag,
             &writer_pstate_flag
         );
 
@@ -110,20 +108,21 @@ tpl_result start_execution(wpath* video_path) {
             pl_config->preserve_aspect ? L"T" : L"F", pl_config->rgb_out ? L"T" : L"F",
             pl_config->gray_scale ? L"T" : L"F", &pl_config->srw_lock,
             // Arguments for STATE
-            pl_state.looping ? L"T" : L"F", pl_state.master_pts, pl_state.muted ? L"T" : L"F",
-            pl_state.playing ? L"T" : L"F", pl_state.preset_idx, pl_state.seek_multiple_idx,
-            pl_state.seeking ? L"T" : L"F", pl_state.vol_lvl, &pl_state.srw_lock,
+            pl_state->looping ? L"T" : L"F", pl_state->main_clock, pl_state->muted ? L"T" : L"F",
+            pl_state->playing ? L"T" : L"F", pl_state->preset_idx, pl_state->seek_multiple_idx,
+            pl_state->seeking ? L"T" : L"F", pl_state->vol_lvl, pl_state->srw_lock,
             // Arguments for FLAGS
             writer_pconf_flag, shutdown, writer_pstate_flag,
             // Argument for KEY
             key_code
         );
-
+        if (_InterlockedOr(&shutdown, 0)) {
+            break;
+        }
         Sleep(polling_rate_ms);
-        system("cls");
+        system("cls"); // debug
         key_code = 0;
     }
-
     return TPL_SUCCESS;
 
     // Set pipeline up with FFMPEG.
