@@ -8,6 +8,7 @@ AlignAfterOpenBracket: BlockIndent
 BinPackParameters: AlwaysOnePerLine
 AlignConsecutiveAssignments: true
 AlignConsecutiveBitFields: true
+AlignConsecutiveDeclarations: true
 
 SortIncludes: true
 IncludeCategories:

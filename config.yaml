@@ -1,0 +1,52 @@
+# --- Termiplay Options --- #
+# DISCLAIMER: Do not add or alter any keys, do not pass in values other than what is specified in Options.
+
+# Options: true, false
+# True color. 
+RGB_OUT: true
+
+# Options: true, false
+# Depends on RGB_OUT. If RGB_OUT is false, this will be ignored. 
+# Allows you to use the 2nd preset on gray-scale. Without this the 2nd preset will
+# be rendered in pure white without any value distinguishing each character.
+GRAYSCALE: false
+
+# Options: Any valid UTF-8 string. Will be evaluated left to right as lowest -> highest coverage.
+# Generic character set. Modifiable. Only one declaration is allowed. Leaving it empty will go to fallback. 
+CHAR_PRESET1: "`.-':_,^=;><+!rc*/z?sLTv)J7(|Fi{C}fI31tlu[neoZ5Yxjya]2ESwqkP6h9d4VpOGbUAKXHm8RD#$Bg0MNWQ%&@"
+
+# Options: true, false
+# Allows A/V sync logic to catch up to audio if it falls behind by dropping frames. 
+# Might result in a worse experience, change to true if you experience the video lagging behind audio.
+FRAME_SKIP: false
+
+# Options: true, false
+# Inserts spaces between pixels to normalize width/height ratio
+# to be consistent. Turn off if it worsens experience.
+PRESERVE_ASPECT_RATIO: true
+
+# Options: Any UTF-8 single character.
+# Makes use of RGB to color each individual "char" pixel. Using this set while  
+# RGB_OUT is false will result in pure white output, as this relies on color 
+# to distinguish pixels, not character coverage. Leaving it empty will go to fallback.
+CHAR_PRESET2: "■" 
+
+# Options: 24 <= FRAMERATE <= 60
+# Lowering this might result in "choppy" playback, increasing it might result in dropped frames. 
+# Heavily depends on how fast the terminal can output each frame. Also dependent on terminal dimensions.
+FRAMERATE: 30
+
+
+# ---------- Controls -------- #
+
+# Loop: L
+# Go through char presets: C
+# Reload configuration: R
+# Play/Pause: Space
+# Mute: M
+# Volume Up/Down: Arrow Up/Arrow Down
+# Fast Forward/Backward : Arrow Right/Arrow Left
+# Quit: Q
+
+# -------------------------- #
+

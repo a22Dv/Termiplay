@@ -3,6 +3,7 @@
 
 #include <Windows.h>
 #include <PathCch.h>
+#include <Shlwapi.h>
 #include <stdbool.h>
 #include "tpl_errors.h"
 #include "tpl_string.h"

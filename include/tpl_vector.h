@@ -5,14 +5,14 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h> // memcpy()
+#include <string.h>
 #include "tpl_errors.h"
 
 #define INIT_VEC_CAPACITY 4
 
 /// @brief Resizable array.
 typedef struct {
-    void* data;
+    void*  data;
     size_t capacity;
     size_t len;
     size_t idx_size;
@@ -24,9 +24,9 @@ typedef struct {
 /// @return Pointer to a heap-allocated vector.
 static tpl_result vec_init(
     const size_t idx_size,
-    vec** vec_ptr
+    vec**        vec_ptr
 ) {
-    vec* v          = NULL;
+    vec*       v    = NULL;
     tpl_result code = TPL_SUCCESS;
     if (vec_ptr == NULL) {
         code = TPL_RECEIVED_NULL;
@@ -88,9 +88,9 @@ error:
 /// @param element A pointer that must point to a NULL pointer variable.
 /// @return Return code.
 static inline tpl_result vec_at(
-    vec* vec,
+    vec*         vec,
     const size_t idx,
-    void** element
+    void**       element
 ) {
     if (element == NULL || vec == NULL) {
         LOG_ERR(TPL_RECEIVED_NULL);
@@ -117,7 +117,7 @@ static inline tpl_result vec_at(
 /// @param idx vector index.
 /// @return A pointer to the specified index of the source vector.
 static inline tpl_result vec_at_const(
-    const vec* vec,
+    const vec*   vec,
     const size_t idx,
     const void** element
 ) {
@@ -147,7 +147,7 @@ static inline tpl_result vec_at_const(
 /// @param target Target capacity.
 /// @return A boolean signifying success or failure.
 static tpl_result vec_ensure_capacity(
-    vec* vec,
+    vec*         vec,
     const size_t target
 ) {
     if (vec == NULL) {
@@ -196,8 +196,8 @@ static tpl_result vec_ensure_capacity(
 /// @param data_count Number of elements to be pushed.
 /// @return Return status.
 static tpl_result vec_mulpush(
-    vec* vec,
-    const void* data,
+    vec*         vec,
+    const void*  data,
     const size_t data_count
 ) {
     if (vec == NULL || data == NULL) {

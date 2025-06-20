@@ -18,7 +18,17 @@ int wmain(
     wchar_t** argv
 ) {
 #ifndef TESTING
-    SetConsoleOutputCP(CP_UTF8);
+    _setmode(_fileno(stdout), _O_U16TEXT);
+    int exit_code = 0;
+    exit_code |= system("ffmpeg -version > NUL 2>&1");
+    exit_code |= system("ffprobe -version > NUL 2>&1");
+    exit_code |= system("ffplay -version > NUL 2>&1");
+
+    if (exit_code != 0) {
+        fprintf(stderr, "FFmpeg/FFprobe/FFplay cannot be found.\n%s\n", err_str(TPL_DEPENDENCY_NOT_FOUND));
+        LOG_ERR(TPL_DEPENDENCY_NOT_FOUND);
+        return TPL_DEPENDENCY_NOT_FOUND;
+    }
     if (argc != 2) {
         LOG_ERR(TPL_INVALID_ARGUMENT);
         fprintf(stderr, "Expected 2 arguments. Got %i.\n", argc);

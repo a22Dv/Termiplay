@@ -29,7 +29,13 @@
     X(TPL_OVERFLOW, "VALUE OVERFLOW")                                                              \
     X(TPL_OVERWRITE, "INVALID NON-NULL POINTER. MEMORY LEAK/OVERWRITE POSSIBLE.")                  \
     X(TPL_FAILED_TO_RESOLVE_PATH, "FAILED TO RESOLVE PATH")                                        \
-    X(TPL_FAILED_TO_PARSE, "FAILED TO PARSE")
+    X(TPL_FAILED_TO_PARSE, "FAILED TO PARSE")                                                      \
+    X(TPL_FAILED_TO_PIPE, "FAILED TO PIPE I/O")                                                    \
+    X(TPL_UNSUPPORTED_STREAM, "UNSUPPORTED STREAM FILE TYPE")                                      \
+    X(TPL_DEPENDENCY_NOT_FOUND, "DEPENDENCY NOT FOUND")                                            \
+    X(TPL_FAILED_TO_OPEN_CONFIG, "FAILED TO OPEN CONFIG")                                          \
+    X(TPL_YAML_ERROR, "YAML PARSING ERROR")                                                        \
+    X(TPL_INVALID_CONFIG, "INVALID CONFIG FILE")
 
 typedef enum {
 #define X(value, string) value,

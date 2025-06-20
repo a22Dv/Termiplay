@@ -7,16 +7,18 @@
 #include "tpl_types.h"
 #include "tpl_vector.h"
 
+/// @brief Resizable string.
 typedef struct {
     vec* buffer;
 } string;
 
+/// @brief Resizable wide string.
 typedef struct {
     vec* buffer;
 } wstring;
 
 /// @brief `free()` a wide string.
-/// @param str_ptr Wide string.
+/// @param str_ptr Pointer to a wide string.
 static inline void str_destroy(string** str_ptr) {
     if (str_ptr == NULL || *str_ptr == NULL) {
         return;
@@ -27,7 +29,7 @@ static inline void str_destroy(string** str_ptr) {
 }
 
 /// @brief `free()` a wide string.
-/// @param wstr_ptr Wide string.
+/// @param wstr_ptr Pointer to a wide string.
 static inline void wstr_destroy(wstring** wstr_ptr) {
     if (wstr_ptr == NULL || *wstr_ptr == NULL) {
         return;
@@ -37,12 +39,13 @@ static inline void wstr_destroy(wstring** wstr_ptr) {
     *wstr_ptr = NULL;
 }
 
-/// @brief Creates a string.
-/// @return A pointer to a heap-allocated string.
+/// @brief Initializes a string to a NULL-ed buffer.
+/// @param buffer Pointer to a NULL-ed pointer to hold the string.
+/// @return Return code.
 static tpl_result str_init(string** buffer) {
     tpl_result return_code = TPL_SUCCESS;
-    string* str            = NULL;
-    vec* v                 = NULL;
+    string*    str         = NULL;
+    vec*       v           = NULL;
     if (buffer == NULL) {
         return_code = TPL_RECEIVED_NULL;
         LOG_ERR(return_code);
@@ -81,7 +84,9 @@ error:
     *buffer     = str;
     return return_code;
 }
-/// @brief Creates a wide string.
+
+/// @brief Initializes a wide string to a pointer to a NULL-ed buffer.
+/// @param buffer Holds the result. Must be NULL-ed
 /// @return A pointer to a heap-allocated wide string.
 static tpl_result wstr_init(wstring** buffer) {
     tpl_result return_code = TPL_SUCCESS;
@@ -96,7 +101,7 @@ static tpl_result wstr_init(wstring** buffer) {
         goto error;
     }
     wstring* wstr = NULL;
-    vec* v        = NULL;
+    vec*     v    = NULL;
     wstr          = malloc(sizeof(wstring));
     if (wstr == NULL) {
         return_code = TPL_ALLOC_FAILED;
@@ -129,27 +134,27 @@ error:
 /// @param target Target capacity without null-termination.
 /// @return Boolean signifying success or failure
 static inline tpl_result str_ensure_capacity(
-    string* str,
+    string*      str,
     const size_t target
 ) {
     return vec_ensure_capacity(str->buffer, target + 1);
 }
 /// @brief  Ensures the capacity of a wide string is at least target + 1 (null-terminator)
-/// @param str Wide string
+/// @param wstr Wide string
 /// @param target Target capacity without null-termination.
 /// @return Return status
 static inline tpl_result wstr_ensure_capacity(
-    wstring* wstr,
+    wstring*     wstr,
     const size_t target
 ) {
     return vec_ensure_capacity(wstr->buffer, target + 1);
 }
 /// @brief Pushes multiple `char`s onto the string. Relies on null-terminated strings.
 /// @param str String
-/// @param data char* to characters.
+/// @param data const char* to characters.
 /// @return Return status
 static tpl_result str_mulpush(
-    string* str,
+    string*     str,
     const char* data
 ) {
     if (str == NULL) {
@@ -161,8 +166,8 @@ static tpl_result str_mulpush(
         LOG_ERR(TPL_RECEIVED_NULL);
         return TPL_RECEIVED_NULL;
     }
-    const size_t data_count  = strlen(data);
-    tpl_result ensure_result = TPL_SUCCESS;
+    const size_t data_count    = strlen(data);
+    tpl_result   ensure_result = TPL_SUCCESS;
     if (SIZE_MAX - str->buffer->len < data_count + 1) {
         LOG_ERR(TPL_OVERFLOW);
         return TPL_OVERFLOW;
@@ -186,7 +191,7 @@ static tpl_result str_mulpush(
 /// @param data Data to be pushed.
 /// @return Return status
 static tpl_result wstr_mulpush(
-    wstring* wstr,
+    wstring*         wstr,
     const tpl_wchar* data
 ) {
     if (wstr == NULL) {
@@ -198,8 +203,8 @@ static tpl_result wstr_mulpush(
         LOG_ERR(TPL_RECEIVED_NULL);
         return TPL_RECEIVED_NULL;
     }
-    const size_t data_count  = wcslen(data);
-    tpl_result ensure_result = TPL_SUCCESS;
+    const size_t data_count    = wcslen(data);
+    tpl_result   ensure_result = TPL_SUCCESS;
     if (SIZE_MAX - wstr->buffer->len < data_count + 1) {
         LOG_ERR(TPL_OVERFLOW);
         return TPL_OVERFLOW;
@@ -258,11 +263,15 @@ static inline const char* str_c_const(const string* str) {
     return (const char*)str->buffer->data;
 }
 
+/// @brief Converts an existing wide string to a new output buffer.
+/// @param wstr Input wide string.
+/// @param output_buffer NULL-ed. Creates a new wstring holding the result at that location.
+/// @return Return code.
 static tpl_result wstr_to_utf8(
-    const wstring* input_path,
-    string** output_buffer
+    const wstring* wstr,
+    string**       output_buffer
 ) {
-    if (input_path == NULL) {
+    if (wstr == NULL) {
         LOG_ERR(TPL_RECEIVED_NULL);
         return TPL_RECEIVED_NULL;
     }
@@ -274,14 +283,13 @@ static tpl_result wstr_to_utf8(
         LOG_ERR(TPL_OVERWRITE);
         return TPL_OVERWRITE;
     }
-    string* buf       = NULL;
+    string*    buf       = NULL;
     tpl_result init_call = str_init(&buf);
     if (tpl_failed(init_call)) {
         LOG_ERR(init_call);
         return init_call;
     }
-    int buf_size =
-        WideCharToMultiByte(CP_UTF8, 0, wstr_c_const(input_path), -1, NULL, 0, NULL, NULL);
+    int buf_size = WideCharToMultiByte(CP_UTF8, 0, wstr_c_const(wstr), -1, NULL, 0, NULL, NULL);
     if (buf_size == 0) {
         str_destroy(&buf);
         LOG_ERR(TPL_FAILED_TO_PARSE);
@@ -294,7 +302,7 @@ static tpl_result wstr_to_utf8(
         return capc_call;
     }
     int conv = WideCharToMultiByte(
-        CP_UTF8, 0, wstr_c_const(input_path), -1, str_c(buf), buf->buffer->capacity, NULL, NULL
+        CP_UTF8, 0, wstr_c_const(wstr), -1, str_c(buf), buf->buffer->capacity, NULL, NULL
     );
     if (conv == 0) {
         str_destroy(&buf);
@@ -306,6 +314,55 @@ static tpl_result wstr_to_utf8(
     return TPL_SUCCESS;
 }
 
-
+/// @brief Converts an existing UTF-8 string to a new wide string output buffer.
+/// @param utf8_str Input UTF-8 string.
+/// @param output_buffer NULL-ed. Creates a new string holding the result at that location.
+/// @return Return code.
+static tpl_result utf8_to_wstr(
+    const string* utf8_str,
+    wstring**     output_buffer
+) {
+    if (utf8_str == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (output_buffer == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (*output_buffer != NULL) {
+        LOG_ERR(TPL_OVERWRITE);
+        return TPL_OVERWRITE;
+    }
+    wstring*   buf       = NULL;
+    tpl_result init_call = wstr_init(&buf);
+    if (tpl_failed(init_call)) {
+        LOG_ERR(init_call);
+        return init_call;
+    }
+    int buf_size_in_wchars = MultiByteToWideChar(CP_UTF8, 0, str_c_const(utf8_str), -1, NULL, 0);
+    if (buf_size_in_wchars == 0) {
+        wstr_destroy(&buf);
+        LOG_ERR(TPL_FAILED_TO_PARSE);
+        return TPL_FAILED_TO_PARSE;
+    }
+    tpl_result capc_call = wstr_ensure_capacity(buf, (size_t)buf_size_in_wchars);
+    if (tpl_failed(capc_call)) {
+        wstr_destroy(&buf);
+        LOG_ERR(capc_call);
+        return capc_call;
+    }
+    int conv = MultiByteToWideChar(
+        CP_UTF8, 0, str_c_const(utf8_str), -1, wstr_c(buf), buf->buffer->capacity
+    );
+    if (conv == 0) {
+        wstr_destroy(&buf);
+        LOG_ERR(TPL_FAILED_TO_PARSE);
+        return TPL_FAILED_TO_PARSE;
+    }
+    buf->buffer->len = (size_t)(conv - 1);
+    *output_buffer   = buf;
+    return TPL_SUCCESS;
+}
 
 #endif

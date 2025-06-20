@@ -1,61 +1,130 @@
+#define DEBUG
+
+#include <Windows.h>
 #include <stdio.h>
 #include "tpl_app.h"
 #include "tpl_errors.h"
 #include "tpl_ffmpeg_utils.h"
+#include "tpl_input.h"
 #include "tpl_path.h"
+#include "tpl_player.h"
+#include "tpl_utils.h"
 
+/// @brief Starts player execution.
+/// @param video_path Path to video file.
+/// @return Return code.
 tpl_result start_execution(wpath* video_path) {
-
     // Check path validity.
-    wpath* resolved_path      = NULL;
-    string* resolved_utf8path = NULL;
-
-    tpl_result resolve_call = wpath_resolve_path(video_path, &resolved_path);
+    wpath*     resolved_path = NULL;
+    tpl_result resolve_call  = wpath_resolve_path(video_path, &resolved_path);
     if (tpl_failed(resolve_call)) {
-        fwprintf(stderr, L"Path cannot be resolved.\n");
+        fprintf(stderr, "Path cannot be resolved.\n");
         LOG_ERR(resolve_call);
         return resolve_call;
     }
     bool exists = wpath_exists(resolved_path);
     if (!exists) {
-        fwprintf(stderr, L"File does not exist or cannot be found.\n");
+        fprintf(stderr, "File does not exist or cannot be found.\n");
         LOG_ERR(TPL_INVALID_ARGUMENT);
         return TPL_INVALID_ARGUMENT;
     }
-
-    tpl_result conv_call = wstr_to_utf8(resolved_path, &resolved_utf8path);
-    if (tpl_failed(conv_call)) {
-        LOG_ERR(conv_call);
-        return conv_call;
+    // Check for valid A/V streams in file.
+    bool       valid_file = false;
+    tpl_result valid_call = tpl_av_file_stream_valid(resolved_path, &valid_file);
+    if (tpl_failed(valid_call)) {
+        fprintf(stderr, "File is not in a supported format or is corrupted.\n");
+        LOG_ERR(valid_call);
+        return valid_call;
     }
-
-    // Check for valid a/v streams in file.
-    bool streams_exist     = false;
-    tpl_result exists_call = tpl_av_streams_exist(resolved_utf8path, &streams_exist);
-    if (tpl_failed(exists_call)) {
-        fwprintf(stderr, L"File is not in a supported format or is corrupted.\n");
-        LOG_ERR(exists_call);
-        return exists_call;
-    }
-    if (!streams_exist) {
-        fwprintf(stderr, L"File A/V streams cannot be found.\n");
+    if (!valid_file) {
+        fprintf(stderr, "File A/V streams cannot be found.\n");
         LOG_ERR(TPL_GENERIC_ERROR);
         return TPL_GENERIC_ERROR;
     }
 
-    // Test WriteConsoleA/fprintf.
-    str_mulpush(resolved_utf8path, "\n");
-    WriteConsoleA(
-        GetStdHandle(STD_OUTPUT_HANDLE), str_c(resolved_utf8path), resolved_utf8path->buffer->len,
-        NULL, NULL
-    );
-    fprintf(stdout, "\x1b[38;2;%d;%d;%dm%s\x1b[0m\n", 255, 55, 255, str_c(resolved_utf8path));
-    return TPL_SUCCESS;
+    // Retrieving configuration file path.
+    wpath*     config_path = NULL;
+    tpl_result conf_call   = tpl_get_config_path(&config_path);
+    if (tpl_failed(conf_call)) {
+        LOG_ERR(conf_call);
+        return conf_call;
+    }
 
-    // -----------------MUST DO--------------------
-    // Make sure argv[1] is a valid path to a video
-    // Make sure the video is in a supported format
-    //---------------------------------------------
+    // Player initialization.
+    tpl_player_conf* temp_pl_config = NULL;
+    volatile LONG    temp_conf_flag = false;
+
+    tpl_result init_pcall = tpl_player_init(resolved_path, config_path, &temp_pl_config);
+    if (tpl_failed(init_pcall)) {
+        LOG_ERR(init_pcall);
+        return init_pcall;
+    }
+    tpl_result set_conf_call = tpl_player_setconf(temp_pl_config, &temp_conf_flag);
+    if (tpl_failed(set_conf_call)) {
+        LOG_ERR(set_conf_call);
+        return set_conf_call;
+    }
+
+    const uint16_t polling_rate_ms = 50;
+    // 20 seek speed levels.
+    const int16_t seek_multiple_table[20] = {-900, -600, -480, -360, -300, -240, -120,
+                                             -60,  -30,  -10,  10,   30,   60,   120,
+                                             240,  300,  360,  480,  600,  900};
+
+    // Player state and flags.
+    tpl_player_conf* pl_config = temp_pl_config;
+    temp_pl_config             = NULL; // Moved pointer.
+    tpl_player_state pl_state  = {
+         .looping           = false,
+         .master_pts        = 0.0,
+         .muted             = false,
+         .playing           = true,
+         .preset_idx        = 0,
+         .seek_multiple_idx = 10.0,
+         .seeking           = false,
+         .vol_lvl           = 0.5,
+         .srw_lock          = SRWLOCK_INIT
+    };
+    volatile LONG writer_pconf_flag  = false;
+    volatile LONG shutdown           = false;
+    volatile LONG writer_pstate_flag = false;
+    uint8_t       key_code           = 0;
+
+    // Main loop.
+    while (true) {
+        key_code             = tpl_poll_input();
+        tpl_result proc_call = tpl_proc_input(
+            key_code, polling_rate_ms, &pl_state, pl_config, &shutdown, &writer_pconf_flag,
+            &writer_pstate_flag
+        );
+
+        // Debug print.
+        wprintf(
+            L"DBG: "
+            L"CONF[cp1:'%hs'|cp2:%c|fs:%s|fr:%u|pa:%s|rgb:%s|gs:%s|slck:%p]\n"
+            L"STATE[loop:%s|pts:%.2f|mut:%s|play:%s|pi:%d|smi:%lf|seek:%s|vol:%.2f|slck:%p]\n"
+            L"FLAGS[pconf:%ld|shut:%ld|pstate:%ld] KEY[%u]\n",
+            // Arguments for CONF
+            str_c(pl_config->char_preset1), pl_config->char_preset2,
+            pl_config->frame_skip ? L"T" : L"F", pl_config->frame_rate,
+            pl_config->preserve_aspect ? L"T" : L"F", pl_config->rgb_out ? L"T" : L"F",
+            pl_config->gray_scale ? L"T" : L"F", &pl_config->srw_lock,
+            // Arguments for STATE
+            pl_state.looping ? L"T" : L"F", pl_state.master_pts, pl_state.muted ? L"T" : L"F",
+            pl_state.playing ? L"T" : L"F", pl_state.preset_idx, pl_state.seek_multiple_idx,
+            pl_state.seeking ? L"T" : L"F", pl_state.vol_lvl, &pl_state.srw_lock,
+            // Arguments for FLAGS
+            writer_pconf_flag, shutdown, writer_pstate_flag,
+            // Argument for KEY
+            key_code
+        );
+
+        Sleep(polling_rate_ms);
+        system("cls");
+        key_code = 0;
+    }
+
+    return TPL_SUCCESS;
 
     // Set pipeline up with FFMPEG.
     // Set player to start
