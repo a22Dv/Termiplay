@@ -1,19 +1,19 @@
 #include "tpl_audio.h"
 #include "tpl_player.h"
 #include "tpl_proc.h"
+#include "tpl_types.h"
 #include "tpl_video.h"
 #include "yaml.h"
-#define DEBUG
-#define SETTING_KEYS 7
 
-#define TPL_AUDIO_THREAD 1
-#define TPL_VIDEO_THREAD 2
-#define TPL_PROC_THREAD 3
+
+#define DEBUG
+
 
 tpl_result tpl_player_init(
     wpath*            video_fpath,
     wpath*            config_path,
     tpl_player_conf** player_conf
+
 ) {
     if (video_fpath == NULL) {
         LOG_ERR(TPL_RECEIVED_NULL);
@@ -313,7 +313,6 @@ tpl_result tpl_player_start(tpl_player_conf** pl_state) { return TPL_SUCCESS; }
 void tpl_player_destroy(tpl_player_conf** pl_state) {}
 
 
-// You gotta include the volatile boolean flag pointers into the data.TODO
 unsigned __stdcall tpl_start_thread(void* data) {
     tpl_thread_data* thread_data = (tpl_thread_data*)data;
     tpl_result       return_code = TPL_SUCCESS;
@@ -332,4 +331,61 @@ unsigned __stdcall tpl_start_thread(void* data) {
         break;
     }
     return return_code;
+}
+
+tpl_result tpl_thread_data_create(
+    tpl_thread_data** thread_data_ptr,
+    uint8_t           thread_id,
+    tpl_player_conf*  conf,
+    tpl_player_state* state,
+    volatile LONG*    pconf_wflag_ptr,
+    volatile LONG*    shutdown_ptr,
+    volatile LONG*    pstate_wflag_ptr
+) {
+    if (thread_data_ptr == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (pconf_wflag_ptr == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (shutdown_ptr == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (pstate_wflag_ptr == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (conf == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (state == NULL) {
+        LOG_ERR(TPL_RECEIVED_NULL);
+        return TPL_RECEIVED_NULL;
+    }
+    if (*thread_data_ptr != NULL) {
+        LOG_ERR(TPL_OVERWRITE);
+        return TPL_OVERWRITE;
+    }
+    if (1 > thread_id || thread_id > 3) {
+        LOG_ERR(TPL_INVALID_ARGUMENT);
+        return TPL_INVALID_ARGUMENT;
+    }
+    tpl_thread_data* th_data = malloc(sizeof(tpl_thread_data));
+    if (th_data == NULL) {
+        LOG_ERR(TPL_ALLOC_FAILED);
+        return TPL_ALLOC_FAILED;
+    }
+    th_data->p_conf = conf;
+    th_data->p_state = state;
+    th_data->writer_pconf_flag_ptr = pconf_wflag_ptr;
+    th_data->writer_pstate_flag_ptr = pstate_wflag_ptr;
+    th_data->shutdown_ptr = shutdown_ptr;
+    th_data->thread_id = thread_id;
+
+    *thread_data_ptr = th_data;
+    return TPL_SUCCESS;
 }

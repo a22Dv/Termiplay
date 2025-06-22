@@ -66,7 +66,7 @@ static tpl_result tpl_proc_input(
     volatile LONG*    writer_pconf_flag,
     volatile LONG*    writer_pstate_flag
 ) {
-    const double increment_magn = (double)polling_rate_ms / 1000.0;
+    const double increment_magn = (1.5 * (double)polling_rate_ms) / 1000.0;
     if (key_code == RELOAD) {
         tpl_result setconf_call = tpl_player_setconf(pl_conf, writer_pconf_flag);
         if (tpl_failed(setconf_call)) {
@@ -109,11 +109,17 @@ static tpl_result tpl_proc_input(
         break;
     case F_FORWARD:
         pl_state->seeking = true;
-        pl_state->seek_multiple_idx += increment_magn;
+        const double resulting_seek_idx_inc = pl_state->seek_multiple_idx + increment_magn;
+        if (0 <= resulting_seek_idx_inc && resulting_seek_idx_inc <= 20) {
+            pl_state->seek_multiple_idx = resulting_seek_idx_inc;
+        }
         break;
     case F_BACKWARD:
         pl_state->seeking = true;
-        pl_state->seek_multiple_idx -= increment_magn;
+        const double resulting_seek_idx_dec = pl_state->seek_multiple_idx - increment_magn;
+        if (0 <= resulting_seek_idx_dec && resulting_seek_idx_dec <= 20) {
+            pl_state->seek_multiple_idx = resulting_seek_idx_dec;
+        }
         break;
     default:
         pl_state->seeking           = false;

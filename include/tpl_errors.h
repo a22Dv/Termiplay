@@ -35,7 +35,10 @@
     X(TPL_DEPENDENCY_NOT_FOUND, "DEPENDENCY NOT FOUND")                                            \
     X(TPL_FAILED_TO_OPEN_CONFIG, "FAILED TO OPEN CONFIG")                                          \
     X(TPL_YAML_ERROR, "YAML PARSING ERROR")                                                        \
-    X(TPL_INVALID_CONFIG, "INVALID CONFIG FILE")
+    X(TPL_INVALID_CONFIG, "INVALID CONFIG FILE")                                                   \
+    X(TPL_FAILED_TO_GET_CONSOLE_DIMENSIONS, "FAILED TO GET CONSOLE DIMENSTIONS")                   \
+    X(TPL_FAILED_TO_INITIALIZE_AUDIO, "FAILED TO INITIALIZE AUDIO")                                \
+    X(TPL_FAILED_TO_START_AUDIO, "FAILED TO START AUDIO")
 
 typedef enum {
 #define X(value, string) value,

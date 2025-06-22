@@ -3,7 +3,6 @@
 #include <Windows.h>
 #include <stdio.h>
 #include "tpl_app.h"
-#include "tpl_audio.h"
 #include "tpl_errors.h"
 #include "tpl_ffmpeg_utils.h"
 #include "tpl_input.h"
@@ -11,6 +10,7 @@
 #include "tpl_player.h"
 #include "tpl_utils.h"
 
+/// @bug Memory leaks. TODO: Deallocate resources in the failure paths.
 /// @brief Starts player execution.
 /// @param video_path Path to video file.
 /// @return Return code.
@@ -51,15 +51,15 @@ tpl_result start_execution(wpath* video_path) {
         return conf_call;
     }
 
+    const int16_t seek_multiple_table[20] = {-900, -600, -480, -360, -300, -240, -120,
+                                             -60,  -30,  -10,  10,   30,   60,   120,
+                                             240,  300,  360,  480,  600,  900};
+
     // Player initialization.
     tpl_player_state* temp_pl_state   = NULL;
     tpl_player_conf*  temp_pl_config  = NULL;
     volatile LONG     temp_conf_flag  = false;
     const uint16_t    polling_rate_ms = 50;
-    // 20 seek speed levels.
-    const int16_t seek_multiple_table[20] = {-900, -600, -480, -360, -300, -240, -120,
-                                             -60,  -30,  -10,  10,   30,   60,   120,
-                                             240,  300,  360,  480,  600,  900};
 
     tpl_result init_pcall = tpl_player_init(resolved_path, config_path, &temp_pl_config);
     if (tpl_failed(init_pcall)) {
@@ -77,6 +77,7 @@ tpl_result start_execution(wpath* video_path) {
         return set_state_call;
     }
 
+
     // Player state and flags.
     tpl_player_conf* pl_config       = temp_pl_config;
     temp_pl_config                   = NULL; // Moved pointer.
@@ -87,6 +88,43 @@ tpl_result start_execution(wpath* video_path) {
     volatile LONG writer_pstate_flag = false;
     uint8_t       key_code           = 0;
 
+    // Thread data creation.
+    tpl_thread_data* audio_thread_data = NULL;
+    tpl_thread_data* video_thread_data = NULL;
+    tpl_thread_data* proc_thread_data  = NULL;
+
+    tpl_result a_th_call = tpl_thread_data_create(
+        &audio_thread_data, TPL_AUDIO_THREAD, pl_config, pl_state, &writer_pconf_flag, &shutdown,
+        &writer_pstate_flag
+    );
+    if (tpl_failed(a_th_call)) {
+        LOG_ERR(a_th_call);
+        return a_th_call;
+    }
+    tpl_result v_th_call = tpl_thread_data_create(
+        &video_thread_data, TPL_VIDEO_THREAD, pl_config, pl_state, &writer_pconf_flag, &shutdown,
+        &writer_pstate_flag
+    );
+    if (tpl_failed(a_th_call)) {
+        LOG_ERR(a_th_call);
+        return a_th_call;
+    }
+    tpl_result p_th_call = tpl_thread_data_create(
+        &proc_thread_data, TPL_PROC_THREAD, pl_config, pl_state, &writer_pconf_flag, &shutdown,
+        &writer_pstate_flag
+    );
+    if (tpl_failed(a_th_call)) {
+        LOG_ERR(a_th_call);
+        return a_th_call;
+    }
+
+    // Thread spawning.
+    HANDLE audio_thread =
+        (HANDLE)_beginthreadex(NULL, 0, tpl_start_thread, (void*)audio_thread_data, 0, NULL);
+    HANDLE video_thread =
+        (HANDLE)_beginthreadex(NULL, 0, tpl_start_thread, (void*)video_thread_data, 0, NULL);
+    HANDLE proc_thread =
+        (HANDLE)_beginthreadex(NULL, 0, tpl_start_thread, (void*)proc_thread_data, 0, NULL);
 
     // Main loop.
     while (true) {
@@ -95,36 +133,53 @@ tpl_result start_execution(wpath* video_path) {
             key_code, polling_rate_ms, pl_state, pl_config, &shutdown, &writer_pconf_flag,
             &writer_pstate_flag
         );
+        if (tpl_failed(proc_call)) {
+            LOG_ERR(proc_call);
+            return proc_call;
+        }
 
-        // Debug print.
+#ifdef DEBUG // Debug print.
         wprintf(
-            L"DBG: "
-            L"CONF[cp1:'%hs'|cp2:%c|fs:%s|fr:%u|pa:%s|rgb:%s|gs:%s|slck:%p]\n"
-            L"STATE[loop:%s|pts:%.2f|mut:%s|play:%s|pi:%d|smi:%lf|seek:%s|vol:%.2f|slck:%p]\n"
-            L"FLAGS[pconf:%ld|shut:%ld|pstate:%ld] KEY[%u]\n",
-            // Arguments for CONF
-            str_c(pl_config->char_preset1), pl_config->char_preset2,
-            pl_config->frame_skip ? L"T" : L"F", pl_config->frame_rate,
-            pl_config->preserve_aspect ? L"T" : L"F", pl_config->rgb_out ? L"T" : L"F",
-            pl_config->gray_scale ? L"T" : L"F", &pl_config->srw_lock,
-            // Arguments for STATE
-            pl_state->looping ? L"T" : L"F", pl_state->main_clock, pl_state->muted ? L"T" : L"F",
-            pl_state->playing ? L"T" : L"F", pl_state->preset_idx, pl_state->seek_multiple_idx,
-            pl_state->seeking ? L"T" : L"F", pl_state->vol_lvl, pl_state->srw_lock,
-            // Arguments for FLAGS
-            writer_pconf_flag, shutdown, writer_pstate_flag,
-            // Argument for KEY
-            key_code
+            L"[STATE DEBUG]\n"
+            L"[LOOPING] = %ls\n"
+            L"[PLAYING] = %ls\n"
+            L"[PRESET INDEX] = %i\n"
+            L"[MUTED] = %ls\n"
+            L"[SEEKING] = %ls\n"
+            L"[VOLUME LEVEL] = %lf\n"
+            L"[SEEK MULTIPLE INDEX] = %lf\n",
+            pl_state->looping ? L"TRUE" : L"FALSE", pl_state->playing ? L"TRUE" : L"FALSE",
+            pl_state->preset_idx, pl_state->muted ? L"TRUE" : L"FALSE",
+            pl_state->seeking ? L"TRUE" : L"FALSE", pl_state->vol_lvl, pl_state->seek_multiple_idx
         );
+#endif
+        // Shutdown cleanup. TODO: Offload to a dedicated function.
         if (_InterlockedOr(&shutdown, 0)) {
+            while (true) {
+                tpl_win_u32 athread_result = WaitForSingleObject(audio_thread, 1);
+                tpl_win_u32 vthread_result = WaitForSingleObject(video_thread, 1);
+                tpl_win_u32 pthread_result = WaitForSingleObject(proc_thread, 1);
+                if (athread_result != WAIT_OBJECT_0 || vthread_result != WAIT_OBJECT_0 ||
+                    pthread_result != WAIT_OBJECT_0) {
+                    Sleep(1);
+                    continue;
+                }
+                CloseHandle(audio_thread);
+                CloseHandle(video_thread);
+                CloseHandle(proc_thread);
+                break;
+            }
             break;
         }
         Sleep(polling_rate_ms);
-        system("cls"); // debug
+        
+        system("cls");
+        
         key_code = 0;
     }
     return TPL_SUCCESS;
 
+    // TODO LIST
     // Set pipeline up with FFMPEG.
     // Set player to start
     // Enter while loop for player.
