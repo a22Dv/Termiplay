@@ -77,7 +77,6 @@ tpl_result start_execution(wpath* video_path) {
         return set_state_call;
     }
 
-
     // Player state and flags.
     tpl_player_conf* pl_config       = temp_pl_config;
     temp_pl_config                   = NULL; // Moved pointer.
@@ -139,19 +138,19 @@ tpl_result start_execution(wpath* video_path) {
         }
 
 #ifdef DEBUG // Debug print.
-        wprintf(
-            L"[STATE DEBUG]\n"
-            L"[LOOPING] = %ls\n"
-            L"[PLAYING] = %ls\n"
-            L"[PRESET INDEX] = %i\n"
-            L"[MUTED] = %ls\n"
-            L"[SEEKING] = %ls\n"
-            L"[VOLUME LEVEL] = %lf\n"
-            L"[SEEK MULTIPLE INDEX] = %lf\n",
-            pl_state->looping ? L"TRUE" : L"FALSE", pl_state->playing ? L"TRUE" : L"FALSE",
-            pl_state->preset_idx, pl_state->muted ? L"TRUE" : L"FALSE",
-            pl_state->seeking ? L"TRUE" : L"FALSE", pl_state->vol_lvl, pl_state->seek_multiple_idx
-        );
+        // wprintf(
+        //     L"[STATE DEBUG]\n"
+        //     L"[LOOPING] = %ls\n"
+        //     L"[PLAYING] = %ls\n"
+        //     L"[PRESET INDEX] = %i\n"
+        //     L"[MUTED] = %ls\n"
+        //     L"[SEEKING] = %ls\n"
+        //     L"[VOLUME LEVEL] = %lf\n"
+        //     L"[SEEK MULTIPLE INDEX] = %lf\n",
+        //     pl_state->looping ? L"TRUE" : L"FALSE", pl_state->playing ? L"TRUE" : L"FALSE",
+        //     pl_state->preset_idx, pl_state->muted ? L"TRUE" : L"FALSE",
+        //     pl_state->seeking ? L"TRUE" : L"FALSE", pl_state->vol_lvl, pl_state->seek_multiple_idx
+        // );
 #endif
         // Shutdown cleanup. TODO: Offload to a dedicated function.
         if (_InterlockedOr(&shutdown, 0)) {
@@ -171,10 +170,27 @@ tpl_result start_execution(wpath* video_path) {
             }
             break;
         }
+        tpl_win_u32 athread_result = WaitForSingleObject(audio_thread, 1);
+        tpl_win_u32 vthread_result = WaitForSingleObject(video_thread, 1);
+        tpl_win_u32 pthread_result = WaitForSingleObject(proc_thread, 1);
+        DWORD       return_code    = 0;
+        if (athread_result == WAIT_OBJECT_0) {
+            GetExitCodeThread(audio_thread, &return_code);
+            LOG_ERR(return_code);
+            return return_code;
+        }
+        if (vthread_result == WAIT_OBJECT_0) {
+            GetExitCodeThread(video_thread, &return_code);
+            LOG_ERR(return_code);
+            return return_code;
+        }
+        if (pthread_result == WAIT_OBJECT_0) {
+            GetExitCodeThread(proc_thread, &return_code);
+            LOG_ERR(return_code);
+            return return_code;
+        }
         Sleep(polling_rate_ms);
-        
         system("cls");
-        
         key_code = 0;
     }
     return TPL_SUCCESS;

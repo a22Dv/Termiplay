@@ -21,17 +21,20 @@ static void tpl_audio_callback(
     const void* pInput,
     ma_uint32   frameCount
 ) {
-    double volume = ((tpl_player_state*)(pDevice->pUserData))->vol_lvl;
-    wprintf(L"%lf\r", volume);
-    static double phase           = 0;
-    int16_t*      out             = (int16_t*)pOutput;
-    ma_uint32     channels        = pDevice->playback.channels;
-    double        sample_rate     = pDevice->sampleRate;
-    double        phase_increment = 2.0 * PI * FREQUENCY_DEBUG / sample_rate;
+    // UNSAFE ACCESS. Subject to race conditions.
+    double          volume          = ((tpl_player_state*)(pDevice->pUserData))->vol_lvl;
+    bool            muted           = ((tpl_player_state*)(pDevice->pUserData))->muted;
+    static double   phase           = 0;
+    static uint32_t frames          = 0;
+    int16_t*        out             = (int16_t*)pOutput;
+    ma_uint32       channels        = pDevice->playback.channels;
+    double          sample_rate     = pDevice->sampleRate;
+    double          phase_increment = 2.0 * PI * FREQUENCY_DEBUG / sample_rate;
     for (ma_uint32 i = 0; i < frameCount; ++i) {
         double sample = sin(phase);
         sample *= volume;
-        int16_t s16    = (int16_t)(sample * 30000);
+        sample *= muted ? 0.0 : 1.0;
+        int16_t s16 = (int16_t)(sample * 30000);
         for (ma_uint32 ch = 0; ch < channels; ++ch) {
             *out++ = s16;
         }
@@ -40,12 +43,32 @@ static void tpl_audio_callback(
             phase -= 2.0 * PI;
         }
     }
+    frames += frameCount;
 }
 
 static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
     // Create two buffers
     int16_t* audio_buffer1 = malloc(sizeof(int16_t) * SAMPLE_RATE * BUFFER_SECONDS_LEN * CHANNELS);
     int16_t* audio_buffer2 = malloc(sizeof(int16_t) * SAMPLE_RATE * BUFFER_SECONDS_LEN * CHANNELS);
+    if (audio_buffer1 == NULL || audio_buffer2 == NULL) {
+        LOG_ERR(TPL_ALLOC_FAILED);
+        return TPL_ALLOC_FAILED;
+    }
+
+    // Fill buffers.
+    tpl_result fill_result1 =
+        tpl_fill_audio_buffer(0.0, audio_buffer1, thread_data->p_conf->video_fpath);
+    tpl_result fill_result2 =
+        tpl_fill_audio_buffer((float)BUFFER_SECONDS_LEN, audio_buffer2, thread_data->p_conf->video_fpath);
+
+    if (tpl_failed(fill_result1)) {
+        LOG_ERR(fill_result1);
+        return fill_result1;
+    }
+    if (tpl_failed(fill_result2)) {
+        LOG_ERR(fill_result2);
+        return fill_result2;
+    }
 
     // Device configuration.
     ma_device_config audio_config  = ma_device_config_init(ma_device_type_playback);
@@ -66,8 +89,8 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
         LOG_ERR(TPL_FAILED_TO_START_AUDIO);
         return TPL_FAILED_TO_START_AUDIO;
     }
-
     bool last_playback_state = true;
+
     while (true) {
         if (InterlockedOr(thread_data->shutdown_ptr, 0)) {
             return TPL_SUCCESS;
@@ -83,6 +106,9 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
     }
 }
 
+/// @brief Swaps pointers with the inactive buffer.
+/// @param inactive_buffer Buffer currently not in use.
+/// @param current_buffer_pointer Buffer in use.
 static void swap_active_buffer(
     int16_t*  inactive_buffer,
     int16_t** current_buffer_pointer
@@ -90,4 +116,43 @@ static void swap_active_buffer(
     *current_buffer_pointer = inactive_buffer;
 }
 
+/// @brief Fills an audio buffer with a call.
+/// @param sec_start Start at this time-stamp.d
+/// @param audio_buffer Buffer to fill. Must be empty. Will overwrite data.
+/// @return Return code.
+static tpl_result tpl_fill_audio_buffer(
+    float    sec_start,
+    int16_t* audio_buffer,
+    wpath*   video_fpath
+) {
+    wchar_t command[1024];
+    _snwprintf(
+        command, 1024,
+        L"ffmpeg -i \"%ls\" -ss %.2f -f s16le -t %i -vn -acodec pcm_s16le -ar %i -ac %i -vn -v error "
+        L"-hide_banner -",
+        wstr_c(video_fpath), sec_start, BUFFER_SECONDS_LEN, SAMPLE_RATE, CHANNELS
+    );
+    FILE* exec_command  = _wpopen(command, L"rb");
+    size_t   bytes_to_read = BUFFER_SECONDS_LEN * SAMPLE_RATE * CHANNELS * sizeof(int16_t);
+    size_t   bytes_read    = 0;
+    while (bytes_read != bytes_to_read) {
+        int b_read = fread((char*)audio_buffer + bytes_read, 1, bytes_to_read - bytes_read, exec_command);
+        if (b_read == 0) {
+            break;
+        }
+        bytes_read += b_read;
+    }
+    int exec_code = _pclose(exec_command);
+    if (exec_code != 0) {
+        LOG_ERR(TPL_FAILED_TO_PIPE);
+        return TPL_FAILED_TO_PIPE;
+    }
+    if (bytes_read < bytes_to_read) {
+        memset(
+            &audio_buffer[bytes_read / sizeof(int16_t)], 0,
+            (bytes_to_read - bytes_read) 
+        );
+    }
+    return TPL_SUCCESS;
+}
 #endif

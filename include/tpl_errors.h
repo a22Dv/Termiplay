@@ -38,7 +38,8 @@
     X(TPL_INVALID_CONFIG, "INVALID CONFIG FILE")                                                   \
     X(TPL_FAILED_TO_GET_CONSOLE_DIMENSIONS, "FAILED TO GET CONSOLE DIMENSTIONS")                   \
     X(TPL_FAILED_TO_INITIALIZE_AUDIO, "FAILED TO INITIALIZE AUDIO")                                \
-    X(TPL_FAILED_TO_START_AUDIO, "FAILED TO START AUDIO")
+    X(TPL_FAILED_TO_START_AUDIO, "FAILED TO START AUDIO")                                          \
+    X(TPL_INVALID_DATA, "RECEIVED INVALID DATA")
 
 typedef enum {
 #define X(value, string) value,
