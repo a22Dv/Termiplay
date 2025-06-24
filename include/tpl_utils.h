@@ -1,7 +1,7 @@
 #ifndef TERMIPLAY_UTILITIES
 #define TERMIPLAY_UTILITIES
-#include "tpl_path.h"
 #include "tpl_errors.h"
+#include "tpl_path.h"
 
 /// @brief Gets the configuration file path.
 /// @param conf_path_ptr Pointer to store the result.
@@ -18,28 +18,28 @@ static tpl_result tpl_get_config_path(wpath** conf_path_ptr) {
         return_code = TPL_OVERWRITE;
         goto cleanup;
     }
-    wpath* exec_path = NULL;
+    wpath*     exec_path      = NULL;
     tpl_result exec_path_call = wpath_get_exec_path(&exec_path);
     if (tpl_failed(exec_path_call)) {
         LOG_ERR(exec_path_call);
         return_code = exec_path_call;
         goto cleanup;
     }
-    wpath* exec_dir = NULL;
+    wpath*     exec_dir      = NULL;
     tpl_result exec_dir_call = wpath_get_parent_path(exec_path, &exec_dir);
     if (tpl_failed(exec_dir_call)) {
         LOG_ERR(exec_dir_call);
         return_code = exec_dir_call;
         goto cleanup;
     }
-    wpath* config_path_name = NULL;
-    tpl_result init_conf_call = wpath_init(&config_path_name, L"config.yaml");
+    wpath*     config_path_name = NULL;
+    tpl_result init_conf_call   = wpath_init(&config_path_name, L"config.yaml");
     if (tpl_failed(init_conf_call)) {
         LOG_ERR(init_conf_call);
         return_code = init_conf_call;
         goto cleanup;
     }
-    wpath* config_path = NULL;
+    wpath*     config_path      = NULL;
     tpl_result config_path_call = wpath_join_path(exec_dir, config_path_name, &config_path);
     if (tpl_failed(config_path_call)) {
         LOG_ERR(config_path_call);
@@ -47,7 +47,7 @@ static tpl_result tpl_get_config_path(wpath** conf_path_ptr) {
         goto cleanup;
     }
     *conf_path_ptr = config_path;
-    config_path = NULL;
+    config_path    = NULL;
 cleanup:
     // destroy() calls are already no-ops if NULL.
     wpath_destroy(&exec_path);
@@ -55,5 +55,16 @@ cleanup:
     wpath_destroy(&config_path_name);
     wpath_destroy(&config_path);
     return return_code;
+}
+
+static tpl_result shutdown_thread(HANDLE** thread) {
+    if (thread == NULL || *thread == NULL || **thread == NULL) {
+        return TPL_SUCCESS;
+    }
+    tpl_win_result exit_result  = WaitForSingleObject(**thread, INFINITE);
+    BOOL           close_result = CloseHandle(**thread);
+    IF_ERR_RET(close_result != TRUE, TPL_FAILED_TO_CLOSE_THREAD);
+    **thread = NULL;
+    return TPL_SUCCESS;
 }
 #endif

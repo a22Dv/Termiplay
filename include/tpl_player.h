@@ -53,6 +53,11 @@ typedef struct {
     uint8_t           thread_id;
 } tpl_thread_data;
 
+typedef struct {
+    tpl_thread_data* thread_data;
+    int16_t* buffer1;
+    int16_t* buffer2;
+} tpl_audio_callback_data;
 
 /// @brief Initializes player state from configuration file.
 /// @param video_fpath Path to video file. Must be valid.

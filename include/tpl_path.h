@@ -29,7 +29,7 @@ static tpl_result wpath_init(
     }
     // Early exit, no initialization required.
     if (path_data == NULL) {
-        return TPL_SUCCESS;
+        return TPL_SUCCESS; 
     }
     const size_t path_len = wcslen(path_data);
     if (path_len >= MAX_PATH) {
