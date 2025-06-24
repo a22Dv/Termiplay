@@ -3,6 +3,8 @@
 #include "tpl_proc.h"
 #include "tpl_types.h"
 #include "tpl_video.h"
+#include "tpl_ffmpeg_utils.h"
+#include "tpl_errors.h"
 #include "yaml.h"
 
 
@@ -41,7 +43,10 @@ tpl_result tpl_player_init(
     pconf->rgb_out         = false;
     pconf->video_fpath     = video_fpath;
     pconf->config_utf8path = NULL;
+    pconf->video_duration = 0.0;
 
+    tpl_result dur_call = tpl_av_get_duration(video_fpath, &pconf->video_duration);
+    IF_ERR_RET(tpl_failed(dur_call), dur_call);
     tpl_result conv_call = wstr_to_utf8(config_path, &(pconf->config_utf8path));
     if (tpl_failed(conv_call)) {
         LOG_ERR(conv_call);
@@ -307,11 +312,6 @@ tpl_result tpl_player_setstate(tpl_player_state** pl_state) {
     *pl_state = temp_pl_state;
     return TPL_SUCCESS;
 }
-
-tpl_result tpl_player_start(tpl_player_conf** pl_state) { return TPL_SUCCESS; }
-
-void tpl_player_destroy(tpl_player_conf** pl_state) {}
-
 
 unsigned __stdcall tpl_start_thread(void* data) {
     tpl_thread_data* thread_data = (tpl_thread_data*)data;

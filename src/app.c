@@ -33,6 +33,9 @@ tpl_result start_execution(wpath* video_path) {
     HANDLE            proc_thread        = NULL;
     uint8_t           key_code           = 0;
     const uint16_t    polling_rate_ms    = 50;
+    const double seek_speed_table[10] = {
+        -120.0, -60.0, -30.0, -10.0, -5.0, 5.0, 10.0, 30.0, 60.0, 120.0
+    };
 
     // Resolving video path.
     tpl_result resolve_call = wpath_resolve_path(video_path, &resolved_path);
@@ -102,7 +105,7 @@ tpl_result start_execution(wpath* video_path) {
         // Poll for input.
         key_code             = tpl_poll_input();
         tpl_result proc_call = tpl_proc_input(
-            key_code, polling_rate_ms, pl_state, pl_config, &shutdown, &writer_pconf_flag,
+            key_code, polling_rate_ms, seek_speed_table, pl_state, pl_config, &shutdown, &writer_pconf_flag,
             &writer_pstate_flag
         );
         IF_ERR_GOTO(tpl_failed(proc_call), proc_call, return_code);
@@ -111,7 +114,7 @@ tpl_result start_execution(wpath* video_path) {
         if (_InterlockedOr(&shutdown, 0)) {
             goto unwind;
         }
-        
+
 #ifdef DEBUG // Debug print.
         _wsystem(L"cls");
         wprintf(
@@ -154,7 +157,6 @@ unwind:
         shutdown_thread(&lookup_thread_handle_address[i]);
         free(lookup_thread_data_address[i]);
     }
-
     wpath_destroy(&resolved_path);
     wpath_destroy(&config_path);
     if (pl_state) {

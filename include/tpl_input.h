@@ -23,7 +23,7 @@
 #define F_FORWARD ARR_RIGHT
 #define F_BACKWARD ARR_LEFT
 #define CHAR_PRESET_COUNT 3
-
+#define SEEK_SPEED_MAX 10
 #define VOL_INCR 0.05
 
 static void discard_buffered_input() {
@@ -60,13 +60,14 @@ static uint8_t tpl_poll_input() {
 static tpl_result tpl_proc_input(
     const uint8_t     key_code,
     const uint8_t     polling_rate_ms,
+    const double*     seek_speed_table,
     tpl_player_state* pl_state,
     tpl_player_conf*  pl_conf,
     volatile LONG*    shutdown,
     volatile LONG*    writer_pconf_flag,
     volatile LONG*    writer_pstate_flag
 ) {
-    const double increment_magn = (1.5 * (double)polling_rate_ms) / 1000.0;
+    const double increment_magn = 0.5 * (double)polling_rate_ms / 1000.0;
     if (key_code == RELOAD) {
         tpl_result setconf_call = tpl_player_setconf(pl_conf, writer_pconf_flag);
         if (tpl_failed(setconf_call)) {
@@ -108,22 +109,32 @@ static tpl_result tpl_proc_input(
         }
         break;
     case F_FORWARD:
-        pl_state->seeking = true;
+        pl_state->seeking                   = true;
         const double resulting_seek_idx_inc = pl_state->seek_multiple_idx + increment_magn;
-        if (0 <= resulting_seek_idx_inc && resulting_seek_idx_inc <= 20) {
+        if (0 <= resulting_seek_idx_inc && resulting_seek_idx_inc <= SEEK_SPEED_MAX) {
             pl_state->seek_multiple_idx = resulting_seek_idx_inc;
+        }
+        const double resulting_mclock_inc =
+            pl_state->main_clock + seek_speed_table[(size_t)floor(resulting_seek_idx_inc)];
+        if (0.0 <= resulting_mclock_inc && resulting_mclock_inc <= pl_conf->video_duration) {
+            pl_state->main_clock = resulting_mclock_inc;
         }
         break;
     case F_BACKWARD:
-        pl_state->seeking = true;
+        pl_state->seeking                   = true;
         const double resulting_seek_idx_dec = pl_state->seek_multiple_idx - increment_magn;
-        if (0 <= resulting_seek_idx_dec && resulting_seek_idx_dec <= 20) {
+        if (0 <= resulting_seek_idx_dec && resulting_seek_idx_dec <= SEEK_SPEED_MAX) {
             pl_state->seek_multiple_idx = resulting_seek_idx_dec;
+        }
+        const double resulting_mclock_dec =
+            pl_state->main_clock + seek_speed_table[(size_t)floor(resulting_seek_idx_dec)];
+        if (0.0 <= resulting_mclock_dec && resulting_mclock_dec <= pl_conf->video_duration) {
+            pl_state->main_clock = resulting_mclock_dec;
         }
         break;
     default:
         pl_state->seeking           = false;
-        pl_state->seek_multiple_idx = 10.0;
+        pl_state->seek_multiple_idx = SEEK_SPEED_MAX / 2;
         break;
     }
     ReleaseSRWLockExclusive(&pl_state->srw_lock);

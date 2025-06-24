@@ -28,6 +28,7 @@ typedef struct {
     bool    rgb_out;
     bool    gray_scale;
     wpath*  video_fpath;
+    double  video_duration;
     string* config_utf8path;
     SRWLOCK srw_lock;
 } tpl_player_conf;
@@ -55,8 +56,8 @@ typedef struct {
 
 typedef struct {
     tpl_thread_data* thread_data;
-    int16_t* buffer1;
-    int16_t* buffer2;
+    int16_t*         buffer1;
+    int16_t*         buffer2;
 } tpl_audio_callback_data;
 
 /// @brief Initializes player state from configuration file.

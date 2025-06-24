@@ -61,7 +61,8 @@
     X(TPL_FAILED_TO_START_AUDIO, L"FAILED TO START AUDIO")                                         \
     X(TPL_INVALID_DATA, L"RECEIVED INVALID DATA")                                                  \
     X(TPL_THREAD_CREATION_FAILURE, L"FAILED TO CREATE THREAD")                                     \
-    X(TPL_FAILED_TO_CLOSE_THREAD, L"FAILURE TO CLOSE THREAD")
+    X(TPL_FAILED_TO_CLOSE_THREAD, L"FAILURE TO CLOSE THREAD")                                      \
+    X(TPL_PIPE_ERROR, L"PIPE ERROR")
 
 typedef enum {
 #define X(value, string) value,

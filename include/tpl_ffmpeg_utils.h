@@ -60,7 +60,7 @@ static tpl_result tpl_av_file_stream_valid(
     tpl_wchar command[1024];
     char      buffer[1024];
     FILE*     pipe;
-    swprintf(
+    _snwprintf(
         command, _countof(command),
         L"ffprobe -v error -show_entries stream=codec_type -of "
         L"default=noprint_wrappers=1:nokey=1 \"%ls\"",
@@ -92,4 +92,33 @@ static tpl_result tpl_av_file_stream_valid(
     return TPL_SUCCESS;
 }
 
+static tpl_result tpl_av_get_duration(
+    wpath* file_wpath,
+    double* duration_buffer
+) {
+    IF_ERR_RET(file_wpath == NULL, TPL_RECEIVED_NULL);
+    IF_ERR_RET(duration_buffer == NULL, TPL_RECEIVED_NULL);
+
+    size_t    total_bytes_read = 0;
+    tpl_wchar cmd_buffer[1024];
+    char      result[128];
+    FILE*     pipe = NULL;
+    
+    memset(result, 0, sizeof(result)); 
+
+    _snwprintf(
+        cmd_buffer, 1024,
+        L"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "
+        L"\"%ls\"",
+        wstr_c(file_wpath)
+    );
+    pipe = _wpopen(cmd_buffer, L"r");
+    IF_ERR_RET(pipe == NULL, TPL_FAILED_TO_PIPE);
+    char* result_ptr = fgets(result, sizeof(result), pipe);
+    int proc_exit_code = _pclose(pipe);
+    IF_ERR_RET(proc_exit_code != 0, TPL_PIPE_ERROR);
+    IF_ERR_RET(result_ptr == NULL, TPL_PIPE_ERROR);
+    *duration_buffer = strtod(result, NULL);
+    return TPL_SUCCESS;
+}
 #endif
