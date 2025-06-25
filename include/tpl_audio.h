@@ -22,29 +22,52 @@ static void tpl_audio_callback(
 ) {
     tpl_audio_callback_data* ac_data    = (tpl_audio_callback_data*)pDevice->pUserData;
     const size_t             active_idx = _InterlockedOr(ac_data->active_idx, 0);
+
+    AcquireSRWLockShared(&ac_data->thread_data->p_state->srw_lock);
+    const bool   mute   = ac_data->thread_data->p_state->muted;
+    const double volume = ac_data->thread_data->p_state->vol_lvl;
+    ReleaseSRWLockShared(&ac_data->thread_data->p_state->srw_lock);
+
+    // Fit within active buffer.
     if (MAX_BUFFER_SIZE >= active_idx + frameCount * CHANNELS) {
         memcpy(pOutput, &ac_data->buffer1[active_idx], frameCount * CHANNELS * sizeof(int16_t));
+        int16_t* out_buffer = (int16_t*)pOutput;
+
+        // Set flags, increment idx.
         _InterlockedExchange(ac_data->active_idx, active_idx + frameCount * CHANNELS);
         AcquireSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
         ac_data->thread_data->p_state->main_clock += (double)frameCount / (double)SAMPLE_RATE;
         ReleaseSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
-        return;
+    } else {
+        // Does not fit within active buffer.
+        const size_t remaining_samples = MAX_BUFFER_SIZE - active_idx;
+        if (remaining_samples > 0) {
+            memcpy(pOutput, &ac_data->buffer1[active_idx], remaining_samples * sizeof(int16_t));
+        }
+
+        // Possible page-fault. 576KB every transfer.
+        memcpy(ac_data->buffer1, ac_data->buffer2, MAX_BUFFER_SIZE * sizeof(int16_t));
+        _InterlockedExchange(ac_data->fill_flag, true);
+        memcpy(
+            (char*)pOutput + remaining_samples * sizeof(int16_t), ac_data->buffer1,
+            (frameCount * CHANNELS - remaining_samples) * sizeof(int16_t)
+        );
+
+        // Set flags, increment idx.
+        _InterlockedExchange(ac_data->active_idx, (frameCount * CHANNELS - remaining_samples));
+        AcquireSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
+        ac_data->thread_data->p_state->main_clock += (double)frameCount / (double)SAMPLE_RATE;
+        ReleaseSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
     }
-    const size_t remaining_samples = MAX_BUFFER_SIZE - active_idx;
-    if (remaining_samples > 0) {
-        memcpy(pOutput, &ac_data->buffer1[active_idx], remaining_samples * sizeof(int16_t));
+
+    // Apply volume.
+    int16_t* out_buffer = (int16_t*)pOutput;
+    for (size_t i = 0; i < frameCount * CHANNELS; ++i) {
+        float value = out_buffer[i];
+        value *= mute ? 0.0 : 1.0;
+        value *= (float)volume;
+        out_buffer[i] = (int16_t)value;
     }
-    // Possible page-fault. 576KB every transfer.
-    memcpy(ac_data->buffer1, ac_data->buffer2, MAX_BUFFER_SIZE * sizeof(int16_t));
-    _InterlockedExchange(ac_data->fill_flag, true);
-    memcpy(
-        (char*)pOutput + remaining_samples * sizeof(int16_t), ac_data->buffer1,
-        (frameCount * CHANNELS - remaining_samples) * sizeof(int16_t)
-    );
-    _InterlockedExchange(ac_data->active_idx, (frameCount * CHANNELS - remaining_samples));
-    AcquireSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
-    ac_data->thread_data->p_state->main_clock += (double)frameCount / (double)SAMPLE_RATE;
-    ReleaseSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
 }
 
 /// @brief
@@ -116,7 +139,7 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
             _InterlockedExchange(&fill_buffer_flag, false);
         }
 
-        //
+        // User-controlled.
         if (!thread_data->p_state->playing && last_playback_state != false) {
             ma_device_stop(&audio_device);
             last_playback_state = false;
@@ -131,27 +154,20 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
             if (was_seeking) {
                 AcquireSRWLockShared(&thread_data->p_state->srw_lock);
                 AcquireSRWLockShared(&thread_data->p_conf->srw_lock);
-                tpl_result tpf1 = tpl_fill_audio_buffer(
-                    thread_data->p_state->main_clock, audio_buffer1,
-                    thread_data->p_conf->video_fpath
-                );
+                const double sec_start = thread_data->p_state->main_clock;
+                const wpath* v_path    = thread_data->p_conf->video_fpath;
                 ReleaseSRWLockShared(&thread_data->p_conf->srw_lock);
+                ReleaseSRWLockShared(&thread_data->p_state->srw_lock);
+                tpl_result tpf1 = tpl_fill_audio_buffer(sec_start, audio_buffer1, v_path);
                 IF_ERR_GOTO(tpl_failed(tpf1), tpf1, return_code);
-
-                AcquireSRWLockShared(&thread_data->p_conf->srw_lock);
-                tpl_result tpf2 = tpl_fill_audio_buffer(
-                    thread_data->p_state->main_clock + BUFFER_SECONDS_LEN, audio_buffer2,
-                    thread_data->p_conf->video_fpath
-                );
-                ReleaseSRWLockShared(&thread_data->p_conf->srw_lock);
+                tpl_result tpf2 =
+                    tpl_fill_audio_buffer(sec_start + BUFFER_SECONDS_LEN, audio_buffer2, v_path);
                 IF_ERR_GOTO(tpl_failed(tpf2), tpf2, return_code);
                 was_seeking = false;
-                ReleaseSRWLockShared(&thread_data->p_state->srw_lock);
             }
             ma_device_start(&audio_device);
             last_playback_state = true;
         }
-
         Sleep(1);
     }
 

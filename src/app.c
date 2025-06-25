@@ -1,4 +1,5 @@
 #define DEBUG
+#define DEBUG_PR
 #define THREAD_COUNT 3
 
 #include <Windows.h>
@@ -115,7 +116,7 @@ tpl_result start_execution(wpath* video_path) {
             goto unwind;
         }
 
-#ifdef DEBUG // Debug print.
+#ifdef DEBUG_PR // Debug print.
         _wsystem(L"cls");
         wprintf(
             L"[STATE DEBUG]\n"
