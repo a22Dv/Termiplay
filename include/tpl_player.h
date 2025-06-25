@@ -59,6 +59,7 @@ typedef struct {
     int16_t*         buffer1;
     int16_t*         buffer2;
     volatile LONG*   fill_flag;
+    volatile LONG*   active_idx;
 } tpl_audio_callback_data;
 
 /// @brief Initializes player state from configuration file.

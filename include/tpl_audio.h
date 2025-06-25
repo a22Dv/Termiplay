@@ -8,6 +8,8 @@
 #define BUFFER_SECONDS_LEN 3
 #define CHANNELS 2
 
+#define MAX_BUFFER_SIZE SAMPLE_RATE* BUFFER_SECONDS_LEN* CHANNELS
+
 #include "miniaudio.h"
 #include "tpl_errors.h"
 #include "tpl_player.h"
@@ -18,31 +20,31 @@ static void tpl_audio_callback(
     const void* pInput,
     ma_uint32   frameCount
 ) {
-
-    /// BUG: current active index is flawed. Seek behavior will be buggy. Must fix.
-    int16_t*                 pOutputCast        = (int16_t*)pOutput;
-    static size_t            current_active_idx = 0;
-    tpl_audio_callback_data* athread_data       = (tpl_audio_callback_data*)pDevice->pUserData;
-    if (current_active_idx + frameCount * CHANNELS <= SAMPLE_RATE * BUFFER_SECONDS_LEN * CHANNELS) {
-        memcpy(
-            pOutput, &athread_data->buffer1[current_active_idx],
-            frameCount * sizeof(int16_t) * CHANNELS
-        );
-        current_active_idx += frameCount * CHANNELS;
-        athread_data->thread_data->p_state->main_clock += (double)frameCount / (double)SAMPLE_RATE;
+    tpl_audio_callback_data* ac_data    = (tpl_audio_callback_data*)pDevice->pUserData;
+    const size_t             active_idx = _InterlockedOr(ac_data->active_idx, 0);
+    if (MAX_BUFFER_SIZE >= active_idx + frameCount * CHANNELS) {
+        memcpy(pOutput, &ac_data->buffer1[active_idx], frameCount * CHANNELS * sizeof(int16_t));
+        _InterlockedExchange(ac_data->active_idx, active_idx + frameCount * CHANNELS);
+        AcquireSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
+        ac_data->thread_data->p_state->main_clock += (double)frameCount / (double)SAMPLE_RATE;
+        ReleaseSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
         return;
     }
+    const size_t remaining_samples = MAX_BUFFER_SIZE - active_idx;
+    if (remaining_samples > 0) {
+        memcpy(pOutput, &ac_data->buffer1[active_idx], remaining_samples * sizeof(int16_t));
+    }
+    // Possible page-fault. 576KB every transfer.
+    memcpy(ac_data->buffer1, ac_data->buffer2, MAX_BUFFER_SIZE * sizeof(int16_t));
+    _InterlockedExchange(ac_data->fill_flag, true);
     memcpy(
-        pOutput, &athread_data->buffer1[current_active_idx],
-        (SAMPLE_RATE * BUFFER_SECONDS_LEN * CHANNELS - current_active_idx * CHANNELS) *
-            sizeof(int16_t)
+        (char*)pOutput + remaining_samples * sizeof(int16_t), ac_data->buffer1,
+        (frameCount * CHANNELS - remaining_samples) * sizeof(int16_t)
     );
-    memcpy(
-        &athread_data->buffer1, &athread_data->buffer2,
-        SAMPLE_RATE * BUFFER_SECONDS_LEN * CHANNELS * sizeof(int16_t)
-    );
-    current_active_idx = frameCount - current_active_idx / CHANNELS;
-    _InterlockedExchange(athread_data->fill_flag, true);
+    _InterlockedExchange(ac_data->active_idx, (frameCount * CHANNELS - remaining_samples));
+    AcquireSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
+    ac_data->thread_data->p_state->main_clock += (double)frameCount / (double)SAMPLE_RATE;
+    ReleaseSRWLockExclusive(&ac_data->thread_data->p_state->srw_lock);
 }
 
 /// @brief
@@ -52,6 +54,7 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
 
     // Set variables.
     volatile LONG            fill_buffer_flag = 0;
+    volatile LONG            active_idx       = 0;
     tpl_result               return_code      = TPL_SUCCESS;
     int16_t*                 audio_buffer1    = NULL;
     int16_t*                 audio_buffer2    = NULL;
@@ -62,8 +65,8 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
     bool                     was_seeking         = false;
 
     // Create two buffers
-    audio_buffer1 = malloc(sizeof(int16_t) * SAMPLE_RATE * BUFFER_SECONDS_LEN * CHANNELS);
-    audio_buffer2 = malloc(sizeof(int16_t) * SAMPLE_RATE * BUFFER_SECONDS_LEN * CHANNELS);
+    audio_buffer1 = malloc(sizeof(int16_t) * MAX_BUFFER_SIZE);
+    audio_buffer2 = malloc(sizeof(int16_t) * MAX_BUFFER_SIZE);
     IF_ERR_GOTO(audio_buffer1 == NULL, TPL_ALLOC_FAILED, return_code);
     IF_ERR_GOTO(audio_buffer2 == NULL, TPL_ALLOC_FAILED, return_code);
 
@@ -77,8 +80,9 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
     IF_ERR_GOTO(tpl_failed(fill_result2), fill_result2, return_code);
 
     // Get callback data.
-    tpl_result callback_data_result =
-        get_callback_data(&tpl_acd, thread_data, audio_buffer1, audio_buffer2, &fill_buffer_flag);
+    tpl_result callback_data_result = get_callback_data(
+        &tpl_acd, thread_data, audio_buffer1, audio_buffer2, &fill_buffer_flag, &active_idx
+    );
     IF_ERR_GOTO(tpl_failed(callback_data_result), callback_data_result, return_code);
 
     // Device configuration.
@@ -94,21 +98,38 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
 
     // Audio loop.
     while (true) {
+
+        // Shutdown.
         if (_InterlockedOr(thread_data->shutdown_ptr, 0)) {
             goto unwind;
         }
-        AcquireSRWLockShared(&thread_data->p_state->srw_lock);
+
+        // Fill, callback-requested.
+        if (_InterlockedOr(&fill_buffer_flag, 0)) {
+            AcquireSRWLockShared(&thread_data->p_state->srw_lock);
+            AcquireSRWLockShared(&thread_data->p_conf->srw_lock);
+            const double sec_start = thread_data->p_state->main_clock + BUFFER_SECONDS_LEN;
+            const wpath* v_path    = thread_data->p_conf->video_fpath;
+            ReleaseSRWLockShared(&thread_data->p_conf->srw_lock);
+            ReleaseSRWLockShared(&thread_data->p_state->srw_lock);
+            tpl_fill_audio_buffer(sec_start, audio_buffer2, v_path);
+            _InterlockedExchange(&fill_buffer_flag, false);
+        }
+
+        //
         if (!thread_data->p_state->playing && last_playback_state != false) {
             ma_device_stop(&audio_device);
             last_playback_state = false;
         } else if (thread_data->p_state->seeking && last_playback_state != false) {
             ma_device_stop(&audio_device);
-            memset(audio_buffer1, 0, SAMPLE_RATE * CHANNELS * BUFFER_SECONDS_LEN * sizeof(int16_t));
-            memset(audio_buffer2, 0, SAMPLE_RATE * CHANNELS * BUFFER_SECONDS_LEN * sizeof(int16_t));
+            memset(audio_buffer1, 0, MAX_BUFFER_SIZE * sizeof(int16_t));
+            memset(audio_buffer2, 0, MAX_BUFFER_SIZE * sizeof(int16_t));
+            _InterlockedExchange(tpl_acd->active_idx, 0);
             last_playback_state = false;
             was_seeking         = true;
         } else if (thread_data->p_state->playing && last_playback_state != true) {
             if (was_seeking) {
+                AcquireSRWLockShared(&thread_data->p_state->srw_lock);
                 AcquireSRWLockShared(&thread_data->p_conf->srw_lock);
                 tpl_result tpf1 = tpl_fill_audio_buffer(
                     thread_data->p_state->main_clock, audio_buffer1,
@@ -119,23 +140,18 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
 
                 AcquireSRWLockShared(&thread_data->p_conf->srw_lock);
                 tpl_result tpf2 = tpl_fill_audio_buffer(
-                    thread_data->p_state->main_clock + 3.0, audio_buffer2,
+                    thread_data->p_state->main_clock + BUFFER_SECONDS_LEN, audio_buffer2,
                     thread_data->p_conf->video_fpath
                 );
                 ReleaseSRWLockShared(&thread_data->p_conf->srw_lock);
                 IF_ERR_GOTO(tpl_failed(tpf2), tpf2, return_code);
                 was_seeking = false;
+                ReleaseSRWLockShared(&thread_data->p_state->srw_lock);
             }
             ma_device_start(&audio_device);
             last_playback_state = true;
         }
-        ReleaseSRWLockShared(&thread_data->p_state->srw_lock);
-        if (_InterlockedOr(&fill_buffer_flag, 0)) {
-            tpl_fill_audio_buffer(
-                thread_data->p_state->main_clock, audio_buffer2, thread_data->p_conf->video_fpath
-            );
-            _InterlockedExchange(&fill_buffer_flag, false);
-        }
+
         Sleep(1);
     }
 
@@ -161,7 +177,7 @@ static tpl_result tpl_fill_audio_buffer(
         wstr_c_const(video_fpath), sec_start, BUFFER_SECONDS_LEN, SAMPLE_RATE, CHANNELS
     );
     FILE*  exec_command  = _wpopen(command, L"rb");
-    size_t bytes_to_read = BUFFER_SECONDS_LEN * SAMPLE_RATE * CHANNELS * sizeof(int16_t);
+    size_t bytes_to_read = MAX_BUFFER_SIZE * sizeof(int16_t);
     size_t bytes_read    = 0;
     while (bytes_read != bytes_to_read) {
         int b_read =
@@ -193,7 +209,8 @@ static tpl_result get_callback_data(
     tpl_thread_data*          thread_data,
     int16_t*                  audio_buffer1,
     int16_t*                  audio_buffer2,
-    volatile LONG*            fill_flag
+    volatile LONG*            fill_flag,
+    volatile LONG*            active_idx
 ) {
     tpl_audio_callback_data* tpl_acd = malloc(sizeof(tpl_audio_callback_data));
 
@@ -201,6 +218,7 @@ static tpl_result get_callback_data(
     tpl_acd->buffer2     = audio_buffer2;
     tpl_acd->thread_data = thread_data;
     tpl_acd->fill_flag   = fill_flag;
+    tpl_acd->active_idx  = active_idx;
     *buffer              = tpl_acd;
     return TPL_SUCCESS;
 }
