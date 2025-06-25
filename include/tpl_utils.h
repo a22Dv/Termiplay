@@ -56,15 +56,4 @@ cleanup:
     wpath_destroy(&config_path);
     return return_code;
 }
-
-static tpl_result shutdown_thread(HANDLE** thread) {
-    if (thread == NULL || *thread == NULL || **thread == NULL) {
-        return TPL_SUCCESS;
-    }
-    tpl_win_result exit_result  = WaitForSingleObject(**thread, INFINITE);
-    BOOL           close_result = CloseHandle(**thread);
-    IF_ERR_RET(close_result != TRUE, TPL_FAILED_TO_CLOSE_THREAD);
-    **thread = NULL;
-    return TPL_SUCCESS;
-}
 #endif

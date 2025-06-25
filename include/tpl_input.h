@@ -116,8 +116,10 @@ static tpl_result tpl_proc_input(
         }
         const double resulting_mclock_inc =
             pl_state->main_clock + seek_speed_table[(size_t)floor(resulting_seek_idx_inc)];
-        if (0.0 <= resulting_mclock_inc && resulting_mclock_inc <= pl_conf->video_duration) {
+        if (resulting_mclock_inc <= pl_conf->video_duration) {
             pl_state->main_clock = resulting_mclock_inc;
+        } else {
+            pl_state->main_clock = pl_conf->video_duration;
         }
         break;
     case F_BACKWARD:
@@ -128,8 +130,10 @@ static tpl_result tpl_proc_input(
         }
         const double resulting_mclock_dec =
             pl_state->main_clock + seek_speed_table[(size_t)floor(resulting_seek_idx_dec)];
-        if (0.0 <= resulting_mclock_dec && resulting_mclock_dec <= pl_conf->video_duration) {
+        if (0.0 <= resulting_mclock_dec) {
             pl_state->main_clock = resulting_mclock_dec;
+        } else {
+            pl_state->main_clock = 0.0;
         }
         break;
     default:

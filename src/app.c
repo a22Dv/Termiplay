@@ -84,7 +84,9 @@ tpl_result start_execution(wpath* video_path) {
     tpl_thread_data** lookup_thread_data_address[THREAD_COUNT] = {
         &audio_thread_data, &video_thread_data, &proc_thread_data
     };
-
+    // Proc thread will need addresses to two string buffers declared here, and a flag to ask for data.
+    // Video thread will need those same addresses, and a boolean to call the proc thread to execute.
+    
     // Create thread data, and start threads.
     for (size_t i = 0; i < THREAD_COUNT; ++i) {
         tpl_result thread_data_create_call = tpl_thread_data_create(
@@ -154,9 +156,15 @@ tpl_result start_execution(wpath* video_path) {
 
 unwind:
     _InterlockedExchange(&shutdown, true);
+   _InterlockedExchange(&shutdown, true);
+
+    HANDLE thread_handles[THREAD_COUNT] = {
+        audio_thread, video_thread, proc_thread
+    };
+    WaitForMultipleObjects(THREAD_COUNT, thread_handles, TRUE, INFINITE);
     for (int i = 0; i < THREAD_COUNT; ++i) {
-        shutdown_thread(&lookup_thread_handle_address[i]);
-        free(lookup_thread_data_address[i]);
+        CloseHandle(*(lookup_thread_handle_address[i]));
+        free(*(lookup_thread_data_address[i]));
     }
     wpath_destroy(&resolved_path);
     wpath_destroy(&config_path);

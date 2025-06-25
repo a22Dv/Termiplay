@@ -15,6 +15,12 @@ GRAYSCALE: false
 # Generic character set. Modifiable. Only one declaration is allowed. Leaving it empty will go to fallback. 
 CHAR_PRESET1: "`.-':_,^=;><+!rc*/z?sLTv)J7(|Fi{C}fI31tlu[neoZ5Yxjya]2ESwqkP6h9d4VpOGbUAKXHm8RD#$Bg0MNWQ%&@"
 
+# Options: Any UTF-8 single character.
+# Makes use of RGB to color each individual "char" pixel. Using this set while  
+# RGB_OUT is false will result in pure white output, as this relies on color 
+# to distinguish pixels, not character coverage. Leaving it empty will go to fallback.
+CHAR_PRESET2: "■" 
+
 # Options: true, false
 # Allows A/V sync logic to catch up to audio if it falls behind by dropping frames. 
 # Might result in a worse experience, change to true if you experience the video lagging behind audio.
@@ -24,12 +30,6 @@ FRAME_SKIP: false
 # Inserts spaces between pixels to normalize width/height ratio
 # to be consistent. Turn off if it worsens experience.
 PRESERVE_ASPECT_RATIO: true
-
-# Options: Any UTF-8 single character.
-# Makes use of RGB to color each individual "char" pixel. Using this set while  
-# RGB_OUT is false will result in pure white output, as this relies on color 
-# to distinguish pixels, not character coverage. Leaving it empty will go to fallback.
-CHAR_PRESET2: "■" 
 
 # Options: 24 <= FRAMERATE <= 60
 # Lowering this might result in "choppy" playback, increasing it might result in dropped frames. 

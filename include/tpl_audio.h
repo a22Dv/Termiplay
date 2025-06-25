@@ -24,9 +24,17 @@ static void tpl_audio_callback(
     const size_t             active_idx = _InterlockedOr(ac_data->active_idx, 0);
 
     AcquireSRWLockShared(&ac_data->thread_data->p_state->srw_lock);
-    const bool   mute   = ac_data->thread_data->p_state->muted;
-    const double volume = ac_data->thread_data->p_state->vol_lvl;
+    const bool   mute    = ac_data->thread_data->p_state->muted;
+    const bool   playing = ac_data->thread_data->p_state->playing;
+    const bool   seeking = ac_data->thread_data->p_state->seeking;
+    const double volume  = ac_data->thread_data->p_state->vol_lvl;
     ReleaseSRWLockShared(&ac_data->thread_data->p_state->srw_lock);
+
+    // Fixes race condition that occures when player is looping.
+    if (seeking || !playing) {
+        memset(pOutput, 0, frameCount * CHANNELS * sizeof(int16_t));
+        return;
+    }
 
     // Fit within active buffer.
     if (MAX_BUFFER_SIZE >= active_idx + frameCount * CHANNELS) {
@@ -119,14 +127,33 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
     ma_result start_call = ma_device_start(&audio_device);
     IF_ERR_GOTO(start_call != MA_SUCCESS, TPL_FAILED_TO_START_AUDIO, return_code);
 
+    AcquireSRWLockShared(&thread_data->p_conf->srw_lock);
+    const double video_duration = thread_data->p_conf->video_duration;
+    ReleaseSRWLockShared(&thread_data->p_conf->srw_lock);
+
     // Audio loop.
     while (true) {
+        AcquireSRWLockShared(&thread_data->p_state->srw_lock);
+        const bool playing   = thread_data->p_state->playing;
+        const seeking        = thread_data->p_state->seeking;
+        const bool   looping = thread_data->p_state->looping;
+        const double clock   = thread_data->p_state->main_clock;
+        ReleaseSRWLockShared(&thread_data->p_state->srw_lock);
 
+        if (video_duration < clock && !looping) {
+            _InterlockedExchange(thread_data->shutdown_ptr, 1);
+        }
         // Shutdown.
         if (_InterlockedOr(thread_data->shutdown_ptr, 0)) {
             goto unwind;
         }
-
+        // Looping.
+        if (looping && clock >= video_duration) {
+            AcquireSRWLockExclusive(&thread_data->p_state->srw_lock);
+            thread_data->p_state->seeking    = true;
+            thread_data->p_state->main_clock = 0.0;
+            ReleaseSRWLockExclusive(&thread_data->p_state->srw_lock);
+        }
         // Fill, callback-requested.
         if (_InterlockedOr(&fill_buffer_flag, 0)) {
             AcquireSRWLockShared(&thread_data->p_state->srw_lock);
@@ -140,17 +167,17 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
         }
 
         // User-controlled.
-        if (!thread_data->p_state->playing && last_playback_state != false) {
+        if (!playing && last_playback_state != false) {
             ma_device_stop(&audio_device);
             last_playback_state = false;
-        } else if (thread_data->p_state->seeking && last_playback_state != false) {
+        } else if (seeking && last_playback_state != false) {
             ma_device_stop(&audio_device);
             memset(audio_buffer1, 0, MAX_BUFFER_SIZE * sizeof(int16_t));
             memset(audio_buffer2, 0, MAX_BUFFER_SIZE * sizeof(int16_t));
             _InterlockedExchange(tpl_acd->active_idx, 0);
             last_playback_state = false;
             was_seeking         = true;
-        } else if (thread_data->p_state->playing && last_playback_state != true) {
+        } else if (playing && last_playback_state != true) {
             if (was_seeking) {
                 AcquireSRWLockShared(&thread_data->p_state->srw_lock);
                 AcquireSRWLockShared(&thread_data->p_conf->srw_lock);
@@ -172,9 +199,15 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
     }
 
 unwind:
+    free(audio_buffer1);
+    free(audio_buffer2);
+    free(tpl_acd);
+    ma_device_uninit(&audio_device);
     return return_code;
 }
 
+/// @bug BUG: Possible cause of elusive race condition. Stale data written to buffer. Happens only
+/// during loops. Might need to move looping logic to main thread. Happens like 1 out of 50 loops.
 /// @brief Fills an audio buffer with a call.
 /// @param sec_start Start at this time-stamp.d
 /// @param audio_buffer Buffer to fill. Must be empty. Will overwrite data.
@@ -187,10 +220,10 @@ static tpl_result tpl_fill_audio_buffer(
     wchar_t command[1024];
     _snwprintf(
         command, 1024,
-        L"ffmpeg -i \"%ls\" -ss %.2lf -f s16le -t %i -vn -acodec pcm_s16le -ar %i -ac %i -vn -v "
+        L"ffmpeg  -ss %.3lf -i \"%ls\" -f s16le -t %i -vn -acodec pcm_s16le -ar %i -ac %i -vn -v "
         L"error "
         L"-hide_banner -",
-        wstr_c_const(video_fpath), sec_start, BUFFER_SECONDS_LEN, SAMPLE_RATE, CHANNELS
+        sec_start, wstr_c_const(video_fpath), BUFFER_SECONDS_LEN, SAMPLE_RATE, CHANNELS
     );
     FILE*  exec_command  = _wpopen(command, L"rb");
     size_t bytes_to_read = MAX_BUFFER_SIZE * sizeof(int16_t);

@@ -243,7 +243,7 @@ tpl_result tpl_player_setconf(
             // overflow aligns within check boundaries. (300 % 255 = 45)
             // as well as hide typos.
             frame_rate = atoi(val_utf8);
-            if (0 == frame_rate || frame_rate > 60) {
+            if (24 > frame_rate || frame_rate > 60) {
                 LOG_ERR(TPL_INVALID_CONFIG);
                 return_code = TPL_INVALID_CONFIG;
                 goto cleanup;
