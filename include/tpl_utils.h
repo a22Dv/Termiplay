@@ -56,4 +56,20 @@ cleanup:
     wpath_destroy(&config_path);
     return return_code;
 }
+
+static tpl_result tpl_get_console_dimensions(
+    uint16_t* width,
+    uint16_t* height
+) {
+    IF_ERR_RET(width == NULL, TPL_RECEIVED_NULL);
+    IF_ERR_RET(height == NULL, TPL_RECEIVED_NULL);
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
+        LOG_ERR(TPL_FAILED_TO_GET_CONSOLE_DIMENSIONS);
+        return TPL_FAILED_TO_GET_CONSOLE_DIMENSIONS;
+    }
+    *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    *width  = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    return TPL_SUCCESS;
+}
 #endif

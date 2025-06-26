@@ -20,8 +20,8 @@
 #define TPL_PROC_THREAD 3
 
 typedef struct {
-    string* char_preset1;
-    char    char_preset2;
+    wstring* char_preset1;
+    tpl_wchar    char_preset2;
     bool    frame_skip;
     uint8_t frame_rate;
     bool    preserve_aspect;
@@ -51,6 +51,11 @@ typedef struct {
     volatile LONG*    writer_pconf_flag_ptr;
     volatile LONG*    shutdown_ptr;
     volatile LONG*    writer_pstate_flag_ptr;
+    volatile LONG*    procv_fill_flag;
+    volatile LONG*    proc_data_ready_flag;
+    string**          v_compressed_framebuffer1;
+    string**          v_compressed_framebuffer2;
+    uint8_t           init_conf_frate;
     uint8_t           thread_id;
 } tpl_thread_data;
 
@@ -109,10 +114,15 @@ unsigned __stdcall tpl_start_thread(void* data);
 tpl_result tpl_thread_data_create(
     tpl_thread_data** thread_data_ptr,
     uint8_t           thread_id,
+    uint8_t           initial_conf_framerate,
     tpl_player_conf*  conf,
     tpl_player_state* state,
     volatile LONG*    pconf_wflag_ptr,
     volatile LONG*    shutdown_ptr,
-    volatile LONG*    pstate_wflag_ptr
+    volatile LONG*    pstate_wflag_ptr,
+    volatile LONG*    proc_drf,
+    volatile LONG*    procv_ff,
+    string**          vc_framebuffer1,
+    string**          vc_framebuffer2
 );
 #endif

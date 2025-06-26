@@ -78,6 +78,7 @@ static void tpl_audio_callback(
     }
 }
 
+/// BUG: RACE CONDITION UPON LOOP/SEEK
 /// @brief
 /// @param thread_data
 /// @return
@@ -140,6 +141,7 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
         const double clock   = thread_data->p_state->main_clock;
         ReleaseSRWLockShared(&thread_data->p_state->srw_lock);
 
+        // Duration-related shutdown.
         if (video_duration < clock && !looping) {
             _InterlockedExchange(thread_data->shutdown_ptr, 1);
         }
@@ -152,7 +154,9 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
             AcquireSRWLockExclusive(&thread_data->p_state->srw_lock);
             thread_data->p_state->seeking    = true;
             thread_data->p_state->main_clock = 0.0;
+            thread_data->p_state->playing    = true;
             ReleaseSRWLockExclusive(&thread_data->p_state->srw_lock);
+            last_playback_state = true;
         }
         // Fill, callback-requested.
         if (_InterlockedOr(&fill_buffer_flag, 0)) {
@@ -167,17 +171,17 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
         }
 
         // User-controlled.
-        if (!playing && last_playback_state != false) {
+        if (!playing && last_playback_state) {
             ma_device_stop(&audio_device);
             last_playback_state = false;
-        } else if (seeking && last_playback_state != false) {
+        } else if (seeking && last_playback_state) {
             ma_device_stop(&audio_device);
             memset(audio_buffer1, 0, MAX_BUFFER_SIZE * sizeof(int16_t));
             memset(audio_buffer2, 0, MAX_BUFFER_SIZE * sizeof(int16_t));
             _InterlockedExchange(tpl_acd->active_idx, 0);
             last_playback_state = false;
             was_seeking         = true;
-        } else if (playing && last_playback_state != true) {
+        } else if (playing && !last_playback_state) {
             if (was_seeking) {
                 AcquireSRWLockShared(&thread_data->p_state->srw_lock);
                 AcquireSRWLockShared(&thread_data->p_conf->srw_lock);
@@ -191,6 +195,9 @@ static tpl_result tpl_execute_audio_thread(tpl_thread_data* thread_data) {
                     tpl_fill_audio_buffer(sec_start + BUFFER_SECONDS_LEN, audio_buffer2, v_path);
                 IF_ERR_GOTO(tpl_failed(tpf2), tpf2, return_code);
                 was_seeking = false;
+                AcquireSRWLockExclusive(&thread_data->p_state->srw_lock);
+                thread_data->p_state->seeking = false;
+                ReleaseSRWLockExclusive(&thread_data->p_state->srw_lock);
             }
             ma_device_start(&audio_device);
             last_playback_state = true;

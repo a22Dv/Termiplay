@@ -1,6 +1,9 @@
 #ifndef TERMIPLAY_FFMPEG_UTILS
 #define TERMIPLAY_FFMPEG_UTILS
 
+#define METADATA_COUNT 2
+
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -93,7 +96,7 @@ static tpl_result tpl_av_file_stream_valid(
 }
 
 static tpl_result tpl_av_get_duration(
-    wpath* file_wpath,
+    wpath*  file_wpath,
     double* duration_buffer
 ) {
     IF_ERR_RET(file_wpath == NULL, TPL_RECEIVED_NULL);
@@ -103,8 +106,8 @@ static tpl_result tpl_av_get_duration(
     tpl_wchar cmd_buffer[1024];
     char      result[128];
     FILE*     pipe = NULL;
-    
-    memset(result, 0, sizeof(result)); 
+
+    memset(result, 0, sizeof(result));
 
     _snwprintf(
         cmd_buffer, 1024,
@@ -114,11 +117,64 @@ static tpl_result tpl_av_get_duration(
     );
     pipe = _wpopen(cmd_buffer, L"r");
     IF_ERR_RET(pipe == NULL, TPL_FAILED_TO_PIPE);
-    char* result_ptr = fgets(result, sizeof(result), pipe);
-    int proc_exit_code = _pclose(pipe);
+    char* result_ptr     = fgets(result, sizeof(result), pipe);
+    int   proc_exit_code = _pclose(pipe);
     IF_ERR_RET(proc_exit_code != 0, TPL_PIPE_ERROR);
     IF_ERR_RET(result_ptr == NULL, TPL_PIPE_ERROR);
     *duration_buffer = strtod(result, NULL);
+    return TPL_SUCCESS;
+}
+
+static tpl_result tpl_av_get_video_metadata(
+    wpath*    video_wpath,
+    uint16_t* video_height,
+    uint16_t* video_width
+) {
+    size_t    total_bytes_read = 0;
+    tpl_wchar cmd_buffer[1024];
+    char      result[512];
+    FILE*     pipe = NULL;
+
+    memset(result, 0, sizeof(result));
+    _snwprintf(
+        cmd_buffer, 1024,
+        L"ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of "
+        L"default=noprint_wrappers=1:nokey=1 "
+        L"\"%ls\"",
+        wstr_c(video_wpath)
+    );
+    pipe = _wpopen(cmd_buffer, L"r");
+    IF_ERR_RET(pipe == NULL, TPL_FAILED_TO_PIPE);
+    char*  sentinel   = result; // result is used to start the loop with a non-NULL value.
+    size_t chars_read = 0;
+    while (sentinel != NULL) {
+        sentinel   = fgets(result + chars_read, 512, pipe);
+        chars_read = strlen(result);
+    }
+    int exit_code = _pclose(pipe);
+    IF_ERR_RET(exit_code != 0, TPL_PIPE_ERROR);
+
+    char*  metadata[METADATA_COUNT] = {NULL, NULL};
+    size_t elem_idx                 = 0;
+    bool   first_char               = true;
+    for (char* chp = result; *chp != '\0'; ++chp) {
+        if (first_char && elem_idx < METADATA_COUNT) {
+            metadata[elem_idx] = chp;
+            elem_idx += 1;
+            first_char = false;
+        }
+        // Framerates are given in fractions. Treated as separate numbers
+        if (*chp == '\n' | *chp == '/') {
+            *chp       = 0x0;
+            first_char = true;
+        }
+    }
+
+    uint32_t lvideo_width  = strtoul(metadata[0], NULL, 10);
+    uint32_t lvideo_height = strtoul(metadata[1], NULL, 10);
+
+    *video_height = (uint16_t)lvideo_height;
+    *video_width = (uint16_t)lvideo_width;
     return TPL_SUCCESS;
 }
 #endif

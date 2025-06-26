@@ -34,6 +34,7 @@ PRESERVE_ASPECT_RATIO: true
 # Options: 24 <= FRAMERATE <= 60
 # Lowering this might result in "choppy" playback, increasing it might result in dropped frames. 
 # Heavily depends on how fast the terminal can output each frame. Also dependent on terminal dimensions.
+# Changes at runtime to this will be ignored and will only be in place at the next execution of the program.
 FRAMERATE: 30
 
 

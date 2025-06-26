@@ -10,10 +10,6 @@
             "cacheVariables": {
                 "CMAKE_TOOLCHAIN_FILE": "C:/custom_programs/vcpkg/scripts/buildsystems/vcpkg.cmake",
                 "CMAKE_BUILD_TYPE": "Debug"
-            },
-            "architecture": {
-                "value": "x64",
-                "strategy": "set"
             }
         }
     ],
