@@ -1,18 +1,13 @@
 BasedOnStyle: LLVM
 ColumnLimit: 100
 IndentWidth: 4
-
 DerivePointerAlignment: false
 PointerAlignment: Left
 AlignAfterOpenBracket: BlockIndent
 BinPackParameters: AlwaysOnePerLine
-AlignConsecutiveAssignments: true
-AlignConsecutiveBitFields: true
 AlignConsecutiveDeclarations: true
-
 SortIncludes: true
 IncludeCategories:
-  # Avoids linking errors due to the configuration stuff <windows.h> does that other headers need.
   - Regex:           '^<[Ww]indows\.h>'
     Priority:        1
   - Regex:           '^<.*>'

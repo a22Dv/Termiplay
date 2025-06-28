@@ -1,8 +1,6 @@
 {
-    "name": "termiplay",
-    "version-string": "0.0.1",
-    "dependencies" : [
-        "libyaml",
-        "lz4"
-    ]
+  "dependencies": [
+    "libyaml",
+    "lz4"
+  ]
 }
