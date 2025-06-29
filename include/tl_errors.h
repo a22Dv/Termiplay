@@ -5,7 +5,20 @@
 // A single macro "list" to keep track of error codes.
 #define ERR_LIST                                                                                   \
     X(TL_SUCCESS, "SUCCESSFUL OPERATION")                                                          \
-    X(TL_GENERIC_ERROR, "GENERIC ERROR")
+    X(TL_GENERIC_ERROR, "GENERIC ERROR")                                                           \
+    X(TL_FFMPEG_NOT_FOUND, "FFMPEG CANNOT BE FOUND")                                               \
+    X(TL_FILE_NOT_FOUND, "FILE CANNOT BE FOUND")                                                   \
+    X(TL_INSUFFICIENT_PERMISSIONS, "INSUFFICIENT PERMISSIONS")                                     \
+    X(TL_INVALID_PATH, "INVALID PATH")                                                             \
+    X(TL_NULL_ARGUMENT, "INVALID NULL ARGUMENT")                                                   \
+    X(TL_OVERWRITE, "POSSIBLE OVERWRITE")                                                          \
+    X(TL_ALLOC_FAILURE, "MEMORY ALLOCATION FAILURE")                                               \
+    X(TL_PIPE_OPEN_FAILURE, "FAILURE TO OPEN PIPE")                                                \
+    X(TL_FORMAT_FAILURE, "FAILURE TO FORMAT")                                                      \
+    X(TL_PIPE_PROCESS_FAILURE, "PROCESS FAILURE")                                                  \
+    X(TL_INVALID_FILE, "INVALID FILE")                                                             \
+    X(TL_INVALID_ARGUMENT, "INVALID ARGUMENT")                                                     \
+    X(TL_THREAD_INIT_FAILURE, "THREAD INITIALIZATION FAILED")
 
 /// @brief Return/Exit code.
 typedef enum tl_result {
@@ -48,7 +61,7 @@ typedef enum tl_result {
 /// @brief Returns the string representation of an error.
 /// @param err Return/Exit code.
 /// @return String representation of the error.
-const char* err_str(tl_result err) {
+static const char *err_str(tl_result err) {
     switch (err) {
 #define X(err, str_err)                                                                            \
     case err:                                                                                      \

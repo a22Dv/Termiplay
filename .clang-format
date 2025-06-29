@@ -2,7 +2,7 @@ BasedOnStyle: LLVM
 ColumnLimit: 100
 IndentWidth: 4
 DerivePointerAlignment: false
-PointerAlignment: Left
+PointerAlignment: Right
 AlignAfterOpenBracket: BlockIndent
 BinPackParameters: AlwaysOnePerLine
 AlignConsecutiveDeclarations: true
