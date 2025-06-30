@@ -18,7 +18,8 @@
     X(TL_PIPE_PROCESS_FAILURE, "PROCESS FAILURE")                                                  \
     X(TL_INVALID_FILE, "INVALID FILE")                                                             \
     X(TL_INVALID_ARGUMENT, "INVALID ARGUMENT")                                                     \
-    X(TL_THREAD_INIT_FAILURE, "THREAD INITIALIZATION FAILED")
+    X(TL_THREAD_INIT_FAILURE, "THREAD INITIALIZATION FAILED")                                      \
+    X(TL_CONSOLE_ERROR, "CONSOLE ERROR")
 
 /// @brief Return/Exit code.
 typedef enum tl_result {

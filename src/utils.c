@@ -129,6 +129,7 @@ tl_result get_metadata(
         mt->height = height;
         mt->width = width;
         mt->fps = fps;
+        mt->streams_mask = streams;
         *mtptr = mt;
         goto epilogue;
     }
@@ -154,6 +155,7 @@ tl_result get_metadata(
     mt->height = height;
     mt->width = width;
     mt->fps = fps;
+    mt->streams_mask = streams;
     *mtptr = mt;
 
 epilogue:
@@ -164,13 +166,13 @@ epilogue:
 }
 
 tl_result create_thread_data(
-    uint8_t       streams,
-    int16_t      *abuf1,
-    int16_t      *abuf2,
-    char        **vbuf1,
-    char        **vbuf2,
-    player_state *pstate,
-    metadata     *mtdta,
+    uint8_t        streams,
+    int16_t       *abuf1,
+    int16_t       *abuf2,
+    char         **vbuf1,
+    char         **vbuf2,
+    player_state  *pstate,
+    metadata      *mtdta,
     thread_data ***thptr
 ) {
     tl_result exit_code = TL_SUCCESS;
@@ -184,9 +186,11 @@ tl_result create_thread_data(
 
     thread_data **data_arr = malloc(sizeof(thread_data *) * WORKER_THREAD_COUNT);
     CHECK(exit_code, data_arr == NULL, TL_ALLOC_FAILURE, return exit_code);
+
+    // External cleanup logic relies on NULL-ed allocations. Do not remove.
     memset(data_arr, 0, sizeof(thread_data *) * WORKER_THREAD_COUNT);
-    
-    thread_data *proc_thdata = NULL; 
+
+    thread_data *proc_thdata = NULL;
     thread_data *video_thdata = NULL;
     thread_data *audio_thdata = NULL;
 
@@ -218,6 +222,7 @@ tl_result create_thread_data(
         audio_thdata->mtdta = mtdta;
         data_arr[AUDIO_THREAD_ID] = audio_thdata;
     }
+
     if (has_video) {
         CHECK(exit_code, vbuf1 == NULL, TL_NULL_ARGUMENT, goto epilogue);
         CHECK(exit_code, vbuf2 == NULL, TL_NULL_ARGUMENT, goto epilogue);
@@ -250,17 +255,22 @@ tl_result create_player_state(player_state **pl_state_ptr) {
     CHECK(exit_code, pl_state_ptr == NULL, TL_NULL_ARGUMENT, return exit_code);
     CHECK(exit_code, *pl_state_ptr != NULL, TL_OVERWRITE, return exit_code);
 
-    player_state* pstate = malloc(sizeof(player_state));
-    CHECK(exit_code, pstate == NULL, TL_ALLOC_FAILURE, return exit_code);
+    player_state *pstate = malloc(sizeof(player_state));
 
     pstate->shutdown = false;
     pstate->looping = false;
     pstate->main_clock = 0.0;
+    pstate->default_charset = true;
     pstate->muted = false;
     pstate->playback = false;
+    pstate->seek_variable = 0.0;
     pstate->seek_idx = 0;
     pstate->seeking = false;
     pstate->volume = 0.5;
+    pstate->abuffer_underflow = true;
+    pstate->vbuffer_underflow = true;
+    pstate->abuffer_readable = false;
+    pstate->vbuffer_readable = false;
     InitializeSRWLock(&pstate->srw);
 
     *pl_state_ptr = pstate;

@@ -18,6 +18,7 @@
 typedef struct metadata {
     uint16_t width;
     uint16_t height;
+    uint8_t  streams_mask;
     uint8_t  fps;
     double   duration;
 } metadata;
@@ -29,8 +30,14 @@ typedef struct player_state {
     bool    looping;
     bool    seeking;
     bool    muted;
+    bool    default_charset;
+    bool    vbuffer_underflow;
+    bool    abuffer_underflow;
+    bool    vbuffer_readable;
+    bool    abuffer_readable;
     double  volume;
     double  main_clock;
+    double  seek_variable;
     size_t  seek_idx;
     SRWLOCK srw;
 } player_state;
