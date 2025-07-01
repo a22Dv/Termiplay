@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <float.h>
 #include "tl_errors.h"
 #include "tl_types.h"
 
@@ -39,7 +40,7 @@ tl_result get_stream_count(
 /// @param mtptr Pointer to store result.
 /// @return Return code.
 tl_result get_metadata(
-    const WCHAR  *media_path,
+    WCHAR  *media_path,
     const uint8_t streams,
     metadata    **mtptr
 );
@@ -69,5 +70,9 @@ tl_result create_thread_data(
 /// @param pl_state_ptr Out-parameter to store result.
 /// @return Return code.
 tl_result create_player_state(player_state **pl_state_ptr);
+
+/// @brief Prints state to console.
+/// @param pstate Player state.
+void state_print(player_state* plstate);
 
 #endif

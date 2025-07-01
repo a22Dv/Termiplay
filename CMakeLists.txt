@@ -7,6 +7,7 @@ set(SRC
     src/app.c
     src/main.c
     src/utils.c
+    src/proc.c
 )
 set(TST
     tests/test.c

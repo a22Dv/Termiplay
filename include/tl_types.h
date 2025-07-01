@@ -21,7 +21,10 @@ typedef struct metadata {
     uint8_t  streams_mask;
     uint8_t  fps;
     double   duration;
+    WCHAR   *media_path;
 } metadata;
+
+/// BUG: REMOVE UNDERFLOW FLAGS. 
 
 /// @brief Active player state.
 typedef struct player_state {
@@ -31,14 +34,15 @@ typedef struct player_state {
     bool    seeking;
     bool    muted;
     bool    default_charset;
-    bool    vbuffer_underflow;
-    bool    abuffer_underflow;
-    bool    vbuffer_readable;
-    bool    abuffer_readable;
+    bool    vbuffer1_readable;
+    bool    abuffer1_readable;
+    bool    abuffer2_readable;
+    bool    vbuffer2_readable;
     double  volume;
     double  main_clock;
     double  seek_variable;
     size_t  seek_idx;
+    size_t  current_serial;
     SRWLOCK srw;
 } player_state;
 
@@ -51,7 +55,6 @@ typedef struct thread_data {
     player_state *pstate;
     metadata     *mtdta;
     uint8_t       thread_id;
-
 } thread_data;
 
 #endif

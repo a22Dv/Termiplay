@@ -85,7 +85,7 @@ tl_result get_stream_count(
 }
 
 tl_result get_metadata(
-    const WCHAR  *media_path,
+    WCHAR        *media_path,
     const uint8_t streams,
     metadata    **mtptr
 ) {
@@ -129,6 +129,7 @@ tl_result get_metadata(
         mt->height = height;
         mt->width = width;
         mt->fps = fps;
+        mt->media_path = media_path;
         mt->streams_mask = streams;
         *mtptr = mt;
         goto epilogue;
@@ -156,6 +157,7 @@ tl_result get_metadata(
     mt->width = width;
     mt->fps = fps;
     mt->streams_mask = streams;
+    mt->media_path = media_path;
     *mtptr = mt;
 
 epilogue:
@@ -257,22 +259,44 @@ tl_result create_player_state(player_state **pl_state_ptr) {
 
     player_state *pstate = malloc(sizeof(player_state));
 
+    // Player state looping condition MUST be true and start at a value above duration (DBL_MAX)
+    // to trigger the looping logic to seek to 0.0, thus handling initialization as a side-effect.
     pstate->shutdown = false;
-    pstate->looping = false;
-    pstate->main_clock = 0.0;
+    pstate->looping = true;
+    pstate->main_clock = DBL_MAX;
     pstate->default_charset = true;
     pstate->muted = false;
-    pstate->playback = false;
+    pstate->playback = true;
     pstate->seek_variable = 0.0;
     pstate->seek_idx = 0;
     pstate->seeking = false;
     pstate->volume = 0.5;
-    pstate->abuffer_underflow = true;
-    pstate->vbuffer_underflow = true;
-    pstate->abuffer_readable = false;
-    pstate->vbuffer_readable = false;
+    pstate->abuffer1_readable = false;
+    pstate->vbuffer1_readable = false;
+    pstate->abuffer2_readable = false;
+    pstate->vbuffer2_readable = false;
+    pstate->current_serial = 0;
     InitializeSRWLock(&pstate->srw);
 
     *pl_state_ptr = pstate;
     return exit_code;
+}
+
+void state_print(player_state *plstate) {
+    printf("\x1b[H");
+    printf(
+        "SHUTDOWN: %s\nPLAYBACK: %s\nLOOPING: %s\nSEEKING: %s\nMUTED: %s\nDEFAULT_CHARSET: "
+        "%s\nVOLUME: %lf\nMAIN_CLOCK: %lf\nSEEK_VAR: %lf\nSEEK_IDX: %llu\n"
+        "-------------------------------------\n"
+        "SERIAL: %llu\nABUF1_VALID: %s\nABUF2_VALID: "
+        "%s\nVBUF1_VALID: %s\nVBUF2_VALID: %s\n",
+        plstate->shutdown ? " TRUE" : "FALSE", plstate->playback ? " TRUE" : "FALSE",
+        plstate->looping ? " TRUE" : "FALSE", plstate->seeking ? " TRUE" : "FALSE",
+        plstate->muted ? " TRUE" : "FALSE", plstate->default_charset ? " TRUE" : "FALSE",
+        plstate->volume, plstate->main_clock, plstate->seek_variable, plstate->seek_idx,
+        plstate->current_serial, plstate->abuffer1_readable ? " TRUE" : "FALSE",
+        plstate->abuffer2_readable ? " TRUE" : "FALSE",
+        plstate->vbuffer1_readable ? " TRUE" : "FALSE",
+        plstate->vbuffer2_readable ? " TRUE" : "FALSE"
+    );
 }
