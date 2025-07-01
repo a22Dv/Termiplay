@@ -92,12 +92,12 @@ tl_result app_exec(WCHAR *media_path) {
         for (size_t i = 0; i < WORKER_THREAD_COUNT; ++i) {
             if (WaitForSingleObject(thread_handles[i], 0) != WAIT_TIMEOUT) {
                 tl_result thread_exit_code = TL_GENERIC_ERROR;
-                DWORD     exit_code = 0;
+                DWORD     w_exit_code = 0;
                 CHECK(
-                    thread_exit_code, !GetExitCodeThread(thread_handles[i], &exit_code),
+                    thread_exit_code, !GetExitCodeThread(thread_handles[i], &w_exit_code),
                     TL_GENERIC_ERROR, goto epilogue
                 );
-                exit_code = (tl_result)exit_code;
+                exit_code = (tl_result)w_exit_code;
                 goto epilogue;
             }
         }
@@ -189,21 +189,21 @@ epilogue:
 
 tl_result poll_input(uint8_t *key_code) {
     tl_result exit_code = TL_SUCCESS;
-    if (!kbhit()) {
+    if (!_kbhit()) {
         *key_code = 0;
         return TL_SUCCESS;
     }
-    uint8_t key = _getch();
+    uint8_t key = (uint8_t)_getch();
     if (key != EXTENDED) {
         *key_code = key;
-        while (kbhit()) {
+        while (_kbhit()) {
             _getch();
         }
         return TL_SUCCESS;
     }
-    uint8_t ext_key = _getch();
+    uint8_t ext_key = (uint8_t)_getch();
     *key_code = ext_key;
-    while (kbhit()) {
+    while (_kbhit()) {
         _getch();
     }
     return TL_SUCCESS;
@@ -288,6 +288,74 @@ tl_result proc_thread_exec(thread_data *thdata) {
         &thdata->audio_buffer1, &thdata->video_buffer1, &thdata->audio_buffer2,
         &thdata->video_buffer2
     };
+    // Set handles & worker thread data.
+    HANDLE        *order_event_handles = NULL;
+    HANDLE        *worker_thread_handles = NULL;
+    wthread_data **worker_thread_data = NULL;
+
+    order_event_handles = malloc(
+        sizeof(HANDLE) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
+    );
+    CHECK(exit_code, order_event_handles == NULL, TL_ALLOC_FAILURE, goto epilogue);
+    memset(
+        order_event_handles, 0,
+        sizeof(HANDLE) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
+    );
+    worker_thread_handles = malloc(
+        sizeof(HANDLE) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
+    );
+    CHECK(exit_code, worker_thread_handles == NULL, TL_ALLOC_FAILURE, goto epilogue);
+    memset(
+        worker_thread_handles, 0,
+        sizeof(HANDLE) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
+    );
+    worker_thread_data = malloc(
+        sizeof(wthread_data *) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
+    );
+    CHECK(exit_code, worker_thread_data == NULL, TL_ALLOC_FAILURE, goto epilogue);
+    memset(
+        worker_thread_data, 0,
+        sizeof(wthread_data *) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
+    );
+
+    // Create event handle, create thread data,
+    uint8_t v_id[2] = {WORKER_V1, WORKER_V2};
+    uint8_t a_id[2] = {WORKER_A1, WORKER_A2};
+    for (size_t i = 0; i < ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2;
+         ++i) {
+        order_event_handles[i] = CreateEventA(NULL, FALSE, FALSE, NULL);
+        CHECK(
+            exit_code,
+            order_event_handles[i] == INVALID_HANDLE_VALUE || order_event_handles[i] == 0,
+            TL_OS_ERROR, goto epilogue
+        );
+
+        uint8_t id = 0;
+        switch (media_streams) {
+        case 0x11:
+            id = (uint8_t)i + 1;
+            break;
+        case 0x01:
+            id = a_id[i];
+            break;
+        case 0x10:
+            id = v_id[i];
+            break;
+        }
+
+        TRY(exit_code,
+            create_wthread_data(thdata, order_event_handles[i], id, &worker_thread_data[i]),
+            goto epilogue);
+        worker_thread_handles[i] = (HANDLE)_beginthreadex(
+            NULL, 0, helper_thread_dispatcher, worker_thread_data[i], 0, NULL
+        );
+        CHECK(
+            exit_code,
+            worker_thread_handles[i] == INVALID_HANDLE_VALUE || worker_thread_handles[i] == 0,
+            TL_OS_ERROR, goto epilogue
+        );
+    }
+
     while (true) {
         AcquireSRWLockShared(&thdata->pstate->srw);
         const bool   shutdown_status = thdata->pstate->shutdown;
@@ -308,23 +376,6 @@ tl_result proc_thread_exec(thread_data *thdata) {
             thdata->pstate->vbuffer1_readable = false;
             thdata->pstate->vbuffer2_readable = false;
             ReleaseSRWLockExclusive(&thdata->pstate->srw);
-            if (media_streams & 0x01) {
-                memset(
-                    thdata->audio_buffer1, 0, sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE
-                );
-                memset(
-                    thdata->audio_buffer2, 0, sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE
-                );
-            }
-            if (media_streams >> VIDEO_FLAG_OFFSET) {
-                // Assumes null-after-free and null-initialization.
-                for (size_t i = 0; i < VIDEO_FPS; ++i) {
-                    free(thdata->video_buffer1[i]);
-                    free(thdata->video_buffer2[i]);
-                }
-                memset(thdata->video_buffer1, 0, sizeof(char *) * VIDEO_FPS);
-                memset(thdata->video_buffer2, 0, sizeof(char *) * VIDEO_FPS);
-            }
             serial_acknowledged = current_serial;
         }
         if (current_seek_state) {
@@ -339,21 +390,24 @@ tl_result proc_thread_exec(thread_data *thdata) {
             thdata->pstate->abuffer2_readable, thdata->pstate->vbuffer2_readable
         };
         ReleaseSRWLockShared(&thdata->pstate->srw);
+
+        // TODO: Signal threads for unreadable buffers.
         for (size_t i = 0; i < BUFFER_COUNT; ++i) {
             if (readable_state[i]) {
                 continue;
             }
             // Signal thread according to index. Audio for 0, 2 | Video for 1 | 3
-
         }
-        // Wait for worker threads to finish. 
+        // Wait for worker threads to finish.
         Sleep(1);
     }
 epilogue:
+    // Call threads once and shut them down.
     return exit_code;
 }
 
 tl_result audio_thread_exec(thread_data *thdata) {
+    // TODO
     while (true) {
         AcquireSRWLockShared(&thdata->pstate->srw);
         const bool shutdown_sig = thdata->pstate->shutdown;
@@ -370,6 +424,7 @@ tl_result audio_thread_exec(thread_data *thdata) {
 }
 
 tl_result video_thread_exec(thread_data *thdata) {
+    // TODO
     while (true) {
         AcquireSRWLockShared(&thdata->pstate->srw);
         const bool shutdown_sig = thdata->pstate->shutdown;
@@ -391,5 +446,15 @@ unsigned int __stdcall thread_dispatcher(void *data) {
     };
     thread_data *data_arg = (thread_data *)data;
     tl_result    exec_code = dispatch[data_arg->thread_id](data_arg);
+    return exec_code;
+}
+
+unsigned int __stdcall helper_thread_dispatcher(void *data) {
+    tl_result (*dispatch[BUFFER_COUNT])(wthread_data *) = {
+        audio_helper_thread_exec, video_helper_thread_exec, audio_helper_thread_exec,
+        video_helper_thread_exec
+    };
+    wthread_data *wthdta = (wthread_data *)data;
+    tl_result     exec_code = dispatch[wthdta->wthread_id - 1](wthdta);
     return exec_code;
 }

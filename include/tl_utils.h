@@ -13,6 +13,8 @@
 
 #define BUFFER_SIZE 1024
 #define WCHAR_PATH_MAX 512
+#define LOWEST_WTHREAD_ID 1
+#define HIGHEST_WTHREAD_ID 4
 /// @brief Checks if a file is valid and passes the full resolved path if so. NULL otherwise.
 /// @param media_path Path to validate.
 /// @param resolved_path NULL-ed pointer to hold the path.
@@ -71,6 +73,18 @@ tl_result create_thread_data(
 /// @return Return code.
 tl_result create_player_state(player_state **pl_state_ptr);
 
+/// @brief Creates a heap-allocated helper thread data.
+/// @param thdta Thread data.
+/// @param order_event Pointer to HANDLE to signal to wake thread.
+/// @param wthread_id Worker thread ID.
+/// @param wth_ptr Pointer to store heap-allocated result.
+/// @return Return code.
+tl_result create_wthread_data(
+    thread_data* thdta,
+    HANDLE order_event,
+    uint8_t wthread_id,
+    wthread_data** wth_ptr
+);
 /// @brief Prints state to console.
 /// @param pstate Player state.
 void state_print(player_state* plstate);

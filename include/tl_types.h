@@ -57,4 +57,10 @@ typedef struct thread_data {
     uint8_t       thread_id;
 } thread_data;
 
+/// @brief Worker thread data.
+typedef struct wthread_data {
+    thread_data* thdata;
+    HANDLE order_event;
+    uint8_t wthread_id;
+} wthread_data;
 #endif

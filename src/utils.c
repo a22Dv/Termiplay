@@ -61,7 +61,7 @@ tl_result get_stream_count(
     pipe = _wpopen(cmd_buffer, L"r");
     CHECK(exit_code, pipe == NULL, TL_PIPE_OPEN_FAILURE, return exit_code);
     size_t byte_offset = 0;
-    while (fgets(rbuf + byte_offset, BUFFER_SIZE - byte_offset, pipe)) {
+    while (fgets(rbuf + byte_offset, (int)(BUFFER_SIZE - byte_offset), pipe)) {
         size_t line_len = strlen(rbuf + byte_offset);
         byte_offset += line_len;
         rbuf[byte_offset - 1] = '\0';
@@ -74,10 +74,10 @@ tl_result get_stream_count(
     for (size_t offset = 0; *(rbuf + offset) != '\0'; offset += (strlen(rbuf + offset) + 1)) {
         if (strcmp("video", rbuf + offset) == 0) {
             vstreams += 1;
-            *streams |= 0x01;
+            *streams |= 0x10;
         } else if ((strcmp("audio", rbuf + offset) == 0)) {
             astreams += 1;
-            *streams |= 0x10;
+            *streams |= 0x01;
         }
     }
     CHECK(exit_code, vstreams >= 2 || astreams >= 2, TL_INVALID_FILE, return exit_code);
@@ -279,6 +279,37 @@ tl_result create_player_state(player_state **pl_state_ptr) {
     InitializeSRWLock(&pstate->srw);
 
     *pl_state_ptr = pstate;
+    return exit_code;
+}
+
+tl_result create_wthread_data(
+    thread_data   *thdta,
+    HANDLE        order_event,
+    uint8_t        wthread_id,
+    wthread_data **wth_ptr
+) {
+    tl_result exit_code = TL_SUCCESS;
+    CHECK(exit_code, thdta == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, order_event == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(
+        exit_code, wthread_id < LOWEST_WTHREAD_ID || wthread_id > HIGHEST_WTHREAD_ID,
+        TL_INVALID_ARGUMENT, return exit_code
+    );
+    CHECK(exit_code, wth_ptr == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, *wth_ptr != NULL, TL_OVERWRITE, return exit_code);
+
+    wthread_data* wthdta = malloc(sizeof(wthread_data));
+    CHECK(exit_code, wthdta == NULL, TL_ALLOC_FAILURE, goto epilogue);
+
+    wthdta->order_event = order_event;
+    wthdta->thdata = thdta;
+    wthdta->wthread_id = wthread_id;
+    *wth_ptr = wthdta;
+
+epilogue:
+    if (exit_code != TL_SUCCESS) {
+        free(wthdta);
+    }
     return exit_code;
 }
 

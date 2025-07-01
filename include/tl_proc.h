@@ -7,6 +7,11 @@
 #include "tl_errors.h"
 #include "tl_types.h"
 
+#define WORKER_A1 1
+#define WORKER_V1 2
+#define WORKER_A2 3
+#define WORKER_V2 4
+
 /// @brief Fills an audio buffer with s16_le samples. Fixed at runtime.
 /// @param clock_start Where to begin sampling.
 /// @param media_path Path to media file. Assumes existence of a valid audio streams.
@@ -33,4 +38,15 @@ tl_result write_vbuffer_compressed(
     char        **buffer,
     const bool    default_charset
 );
+
+/// @brief Executes the audio decoder helper thread.
+/// @param worker_thdata Worker thread data.
+/// @return Return code.
+tl_result audio_helper_thread_exec(wthread_data* worker_thdata);
+
+/// @brief Executes video decoder helper thread.
+/// @param worker_thdata Worker thread data.
+/// @return Return code.
+tl_result video_helper_thread_exec(wthread_data* worker_thdata);
+
 #endif

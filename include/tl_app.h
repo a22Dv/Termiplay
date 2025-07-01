@@ -78,4 +78,9 @@ tl_result proc_input(
 /// @return `unsigned int` (Required for _beginthreadex)
 unsigned int __stdcall thread_dispatcher(void *data);
 
+/// @brief Dispatches threads via `_beginthreadex` specifically for helper worker threads.
+/// @param data Worker thread data.
+/// @return `unsigned int` (Required for _beginthreadex)
+unsigned int __stdcall helper_thread_dispatcher(void *data);
+
 #endif
