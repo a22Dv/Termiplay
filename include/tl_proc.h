@@ -1,16 +1,17 @@
 #ifndef TL_PROC
 #define TL_PROC
 
+#include <stdio.h>
 #include <stdbool.h>
 #include "Windows.h"
 #include "miniaudio.h"
 #include "tl_errors.h"
 #include "tl_types.h"
 
-#define WORKER_A1 1
+#define WORKER_A1 0
+#define WORKER_A2 1
 #define WORKER_V1 2
-#define WORKER_A2 3
-#define WORKER_V2 4
+#define WORKER_V2 3
 
 /// @brief Fills an audio buffer with s16_le samples. Fixed at runtime.
 /// @param clock_start Where to begin sampling.

@@ -1,13 +1,13 @@
 #include "tl_app.h"
+#include <stdio.h>
 
 tl_result app_exec(WCHAR *media_path) {
-    tl_result exit_code = TL_SUCCESS;
-    WCHAR    *media_rpath = NULL;
-    metadata *media_mtdata = NULL;
-    uint8_t   stream_count = 0;
-
+    tl_result             exit_code = TL_SUCCESS;
+    WCHAR                *media_rpath = NULL;
+    metadata             *media_mtdata = NULL;
+    uint8_t               stream_count = 0;
     uint8_t               active_threads = 0;
-    HANDLE                thread_handles[WORKER_THREAD_COUNT] = {0, 0, 0};
+    HANDLE               *thread_handles = NULL;
     thread_data         **thdata = NULL;
     player_state         *plstate = NULL;
     char                **video_buffer1 = NULL;
@@ -16,25 +16,24 @@ tl_result app_exec(WCHAR *media_path) {
     int16_t              *audio_buffer2 = NULL;
     static const uint16_t seek_multiples[SEEK_SPEEDS] = {1, 5, 15, 30, 60, 120, 240, 480};
 
+    CHECK(exit_code, media_path == NULL, TL_NULL_ARGUMENT, goto epilogue);
     TRY(exit_code, is_valid_file(media_path, &media_rpath), goto epilogue);
     TRY(exit_code, get_stream_count(media_rpath, &stream_count), goto epilogue);
     TRY(exit_code, get_metadata(media_rpath, stream_count, &media_mtdata), goto epilogue);
     TRY(exit_code, create_player_state(&plstate), goto epilogue);
 
-    // Audio present.
-    if (stream_count & 0x01) {
-        audio_buffer1 = malloc(sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE);
-        audio_buffer2 = malloc(sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE);
+    const size_t thread_count = WORKER_THREAD_COUNT - (stream_count & VIDEO_PRESENT ? 0 : 1);
 
-        CHECK(exit_code, audio_buffer1 == NULL, TL_ALLOC_FAILURE, goto epilogue);
-        memset(audio_buffer1, 0, sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE);
-
-        CHECK(exit_code, audio_buffer2 == NULL, TL_ALLOC_FAILURE, goto epilogue);
-        memset(audio_buffer2, 0, sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE);
-    }
+    // Audio is always present. Will be fed silence in absence. Required for main clock.
+    audio_buffer1 = malloc(sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE);
+    audio_buffer2 = malloc(sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE);
+    CHECK(exit_code, audio_buffer1 == NULL, TL_ALLOC_FAILURE, goto epilogue);
+    CHECK(exit_code, audio_buffer2 == NULL, TL_ALLOC_FAILURE, goto epilogue);
+    memset(audio_buffer1, 0, sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE);
+    memset(audio_buffer2, 0, sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE);
 
     // Video present.
-    if (stream_count >> VIDEO_FLAG_OFFSET) {
+    if (stream_count & VIDEO_PRESENT) {
         video_buffer1 = malloc(sizeof(char *) * VIDEO_FPS);
         video_buffer2 = malloc(sizeof(char *) * VIDEO_FPS);
 
@@ -45,6 +44,10 @@ tl_result app_exec(WCHAR *media_path) {
         memset(video_buffer2, 0, sizeof(char *) * VIDEO_FPS);
     }
 
+    thread_handles = malloc(sizeof(HANDLE) * thread_count);
+    CHECK(exit_code, thread_handles == NULL, TL_ALLOC_FAILURE, goto epilogue);
+    memset(thread_handles, 0, sizeof(HANDLE) * thread_count);
+
     // Create/allocate thread data array.
     TRY(exit_code,
         create_thread_data(
@@ -54,14 +57,11 @@ tl_result app_exec(WCHAR *media_path) {
         goto epilogue);
 
     // Start threads conditionally.
-    for (size_t i = 0; i < WORKER_THREAD_COUNT; ++i) {
-        if (i == AUDIO_THREAD_ID && stream_count & 0x01 || i == PROC_THREAD_ID ||
-            i == VIDEO_THREAD_ID && stream_count >> 4) {
-            thread_handles[i] =
-                (HANDLE)_beginthreadex(NULL, 0, thread_dispatcher, (void *)thdata[i], 0, NULL);
-            CHECK(exit_code, thread_handles[i] == 0, TL_THREAD_INIT_FAILURE, goto epilogue);
-            active_threads += 1;
-        }
+    for (size_t i = 0; i < thread_count; ++i) {
+        thread_handles[i] =
+            (HANDLE)_beginthreadex(NULL, 0, thread_dispatcher, (void *)thdata[i], 0, NULL);
+        CHECK(exit_code, thread_handles[i] == NULL, TL_THREAD_INIT_FAILURE, goto epilogue);
+        active_threads += 1;
     }
 
     bool                       prev_seeking = false;
@@ -88,13 +88,16 @@ tl_result app_exec(WCHAR *media_path) {
             break;
         }
 
+        DWORD waitResult = WaitForMultipleObjects((DWORD)thread_count, thread_handles, FALSE, 0);
+        if (waitResult >= WAIT_OBJECT_0 && waitResult < WAIT_OBJECT_0 + thread_count) {
+        }
         // Check for premature thread shutdowns.
-        for (size_t i = 0; i < WORKER_THREAD_COUNT; ++i) {
+        for (size_t i = 0; i < thread_count; ++i) {
             if (WaitForSingleObject(thread_handles[i], 0) != WAIT_TIMEOUT) {
-                tl_result thread_exit_code = TL_GENERIC_ERROR;
+                tl_result terminated_code = TL_GENERIC_ERROR;
                 DWORD     w_exit_code = 0;
                 CHECK(
-                    thread_exit_code, !GetExitCodeThread(thread_handles[i], &w_exit_code),
+                    terminated_code, !GetExitCodeThread(thread_handles[i], &w_exit_code),
                     TL_GENERIC_ERROR, goto epilogue
                 );
                 exit_code = (tl_result)w_exit_code;
@@ -151,15 +154,17 @@ epilogue:
         plstate->shutdown = true;
         ReleaseSRWLockExclusive(&plstate->srw);
         WaitForMultipleObjects(active_threads, thread_handles, true, INFINITE);
-        for (size_t i = 0; i < WORKER_THREAD_COUNT; ++i) {
+        for (size_t i = 0; i < active_threads; ++i) {
             if (thread_handles[i] != NULL) {
                 CloseHandle(thread_handles[i]);
                 thread_handles[i] = NULL;
             }
         }
+        free(thread_handles);
     }
     if (thdata != NULL) {
-        for (size_t i = 0; i < WORKER_THREAD_COUNT; ++i) {
+        for (size_t i = 0; i < WORKER_THREAD_COUNT - (stream_count & VIDEO_PRESENT ? 0 : 1); ++i) {
+
             // Structs themselves are free-ed, internals are just pointers to declared
             // variables declared in this scope and free-ed in the next block explicitly.
             free(thdata[i]);
@@ -189,9 +194,10 @@ epilogue:
 
 tl_result poll_input(uint8_t *key_code) {
     tl_result exit_code = TL_SUCCESS;
+    CHECK(exit_code, key_code == NULL, TL_NULL_ARGUMENT, return exit_code);
     if (!_kbhit()) {
         *key_code = 0;
-        return TL_SUCCESS;
+        return exit_code;
     }
     uint8_t key = (uint8_t)_getch();
     if (key != EXTENDED) {
@@ -199,14 +205,14 @@ tl_result poll_input(uint8_t *key_code) {
         while (_kbhit()) {
             _getch();
         }
-        return TL_SUCCESS;
+        return exit_code;
     }
     uint8_t ext_key = (uint8_t)_getch();
     *key_code = ext_key;
     while (_kbhit()) {
         _getch();
     }
-    return TL_SUCCESS;
+    return exit_code;
 }
 
 tl_result proc_input(
@@ -276,87 +282,67 @@ tl_result proc_input(
 }
 
 tl_result proc_thread_exec(thread_data *thdata) {
-    tl_result     exit_code = TL_SUCCESS;
+    tl_result exit_code = TL_SUCCESS;
+    CHECK(exit_code, thdata == NULL, TL_NULL_ARGUMENT, return exit_code);
+
     const double  media_duration = thdata->mtdta->duration;
     const WCHAR  *media_path = thdata->mtdta->media_path;
     const uint8_t media_streams = thdata->mtdta->streams_mask;
+    const size_t  buffer_count = MAX_BUFFER_COUNT - ((media_streams & VIDEO_PRESENT ? 0 : 1) * 2);
     size_t        serial_acknowledged = 0;
-    bool          previous_seek_state = false;
 
-    // For-loop requires order a1-v1-a2-v2.
-    const void *buffers[BUFFER_COUNT] = {
-        &thdata->audio_buffer1, &thdata->video_buffer1, &thdata->audio_buffer2,
-        &thdata->video_buffer2
-    };
+    HANDLE active_finished_ehandle[MAX_BUFFER_COUNT] = {NULL, NULL, NULL, NULL};
+    HANDLE active_wthread_handles[MAX_BUFFER_COUNT] = {NULL, NULL, NULL, NULL};
+    size_t active_wthread_count = 0;
+
     // Set handles & worker thread data.
-    HANDLE        *order_event_handles = NULL;
+    HANDLE        *finished_ehandle = NULL;
+    HANDLE        *shutdown_ehandle = NULL;
+    HANDLE        *order_ehandle = NULL;
     HANDLE        *worker_thread_handles = NULL;
     wthread_data **worker_thread_data = NULL;
+    uint8_t        initialized_wthreads = 0;
 
-    order_event_handles = malloc(
-        sizeof(HANDLE) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
-    );
-    CHECK(exit_code, order_event_handles == NULL, TL_ALLOC_FAILURE, goto epilogue);
-    memset(
-        order_event_handles, 0,
-        sizeof(HANDLE) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
-    );
-    worker_thread_handles = malloc(
-        sizeof(HANDLE) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
-    );
+    // Buffer count is used here as each thread is responsible for one buffer.
+    finished_ehandle = malloc(sizeof(HANDLE) * buffer_count);
+    order_ehandle = malloc(sizeof(HANDLE) * buffer_count);
+    shutdown_ehandle = malloc(sizeof(HANDLE) * buffer_count);
+    worker_thread_handles = malloc(sizeof(HANDLE) * buffer_count);
+    worker_thread_data = malloc(sizeof(wthread_data *) * buffer_count);
+    CHECK(exit_code, finished_ehandle == NULL, TL_ALLOC_FAILURE, goto epilogue);
+    CHECK(exit_code, order_ehandle == NULL, TL_ALLOC_FAILURE, goto epilogue);
+    CHECK(exit_code, shutdown_ehandle == NULL, TL_ALLOC_FAILURE, goto epilogue);
     CHECK(exit_code, worker_thread_handles == NULL, TL_ALLOC_FAILURE, goto epilogue);
-    memset(
-        worker_thread_handles, 0,
-        sizeof(HANDLE) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
-    );
-    worker_thread_data = malloc(
-        sizeof(wthread_data *) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
-    );
     CHECK(exit_code, worker_thread_data == NULL, TL_ALLOC_FAILURE, goto epilogue);
-    memset(
-        worker_thread_data, 0,
-        sizeof(wthread_data *) * ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2
-    );
+    memset(finished_ehandle, 0, sizeof(HANDLE) * buffer_count);
+    memset(order_ehandle, 0, sizeof(HANDLE) * buffer_count);
+    memset(shutdown_ehandle, 0, sizeof(HANDLE) * buffer_count);
+    memset(worker_thread_handles, 0, sizeof(HANDLE) * buffer_count);
+    memset(worker_thread_data, 0, sizeof(wthread_data *) * buffer_count);
 
-    // Create event handle, create thread data,
-    uint8_t v_id[2] = {WORKER_V1, WORKER_V2};
-    uint8_t a_id[2] = {WORKER_A1, WORKER_A2};
-    for (size_t i = 0; i < ((media_streams & 0x01) + (media_streams >> VIDEO_FLAG_OFFSET)) * 2;
-         ++i) {
-        order_event_handles[i] = CreateEventA(NULL, FALSE, FALSE, NULL);
-        CHECK(
-            exit_code,
-            order_event_handles[i] == INVALID_HANDLE_VALUE || order_event_handles[i] == 0,
-            TL_OS_ERROR, goto epilogue
-        );
-
-        uint8_t id = 0;
-        switch (media_streams) {
-        case 0x11:
-            id = (uint8_t)i + 1;
-            break;
-        case 0x01:
-            id = a_id[i];
-            break;
-        case 0x10:
-            id = v_id[i];
-            break;
-        }
-
+    const uint8_t thread_ids[MAX_BUFFER_COUNT] = {WORKER_A1, WORKER_A2, WORKER_V1, WORKER_V2};
+    for (size_t i = 0; i < buffer_count; ++i) {
+        finished_ehandle[i] = CreateEventW(NULL, TRUE, FALSE, NULL);
+        CHECK(exit_code, finished_ehandle[i] == INVALID_HANDLE_VALUE, TL_OS_ERROR, goto epilogue);
+        order_ehandle[i] = CreateEventW(NULL, FALSE, FALSE, NULL);
+        CHECK(exit_code, order_ehandle[i] == INVALID_HANDLE_VALUE, TL_OS_ERROR, goto epilogue);
+        shutdown_ehandle[i] = CreateEventW(NULL, TRUE, FALSE, NULL);
+        CHECK(exit_code, shutdown_ehandle[i] == INVALID_HANDLE_VALUE, TL_OS_ERROR, goto epilogue);
         TRY(exit_code,
-            create_wthread_data(thdata, order_event_handles[i], id, &worker_thread_data[i]),
+            create_wthread_data(
+                thdata, order_ehandle[i], finished_ehandle[i], shutdown_ehandle[i], thread_ids[i],
+                &worker_thread_data[i]
+            ),
             goto epilogue);
         worker_thread_handles[i] = (HANDLE)_beginthreadex(
-            NULL, 0, helper_thread_dispatcher, worker_thread_data[i], 0, NULL
+            NULL, 0, helper_thread_dispatcher, (void *)worker_thread_data[i], 0, NULL
         );
-        CHECK(
-            exit_code,
-            worker_thread_handles[i] == INVALID_HANDLE_VALUE || worker_thread_handles[i] == 0,
-            TL_OS_ERROR, goto epilogue
-        );
+        CHECK(exit_code, worker_thread_handles[i] == NULL, TL_OS_ERROR, goto epilogue);
+        initialized_wthreads++;
     }
 
     while (true) {
+        active_wthread_count = 0;
         AcquireSRWLockShared(&thdata->pstate->srw);
         const bool   shutdown_status = thdata->pstate->shutdown;
         const bool   current_charset = thdata->pstate->default_charset;
@@ -380,29 +366,84 @@ tl_result proc_thread_exec(thread_data *thdata) {
         }
         if (current_seek_state) {
             // Sleep proportional to the polling rate to avoid wasting time
-            // but prevent a busy-waiting loop.
-            Sleep(POLLING_RATE_MS / 2);
+            // but prevent a tight busy-waiting loop.
+            Sleep(POLLING_RATE_MS / 5);
             continue;
         }
         AcquireSRWLockShared(&thdata->pstate->srw);
-        const bool readable_state[BUFFER_COUNT] = {
-            thdata->pstate->abuffer1_readable, thdata->pstate->vbuffer1_readable,
-            thdata->pstate->abuffer2_readable, thdata->pstate->vbuffer2_readable
+        const bool readable_state[MAX_BUFFER_COUNT] = {
+            thdata->pstate->abuffer1_readable, thdata->pstate->abuffer2_readable,
+            thdata->pstate->vbuffer1_readable, thdata->pstate->vbuffer2_readable
         };
         ReleaseSRWLockShared(&thdata->pstate->srw);
-
-        // TODO: Signal threads for unreadable buffers.
-        for (size_t i = 0; i < BUFFER_COUNT; ++i) {
+        for (size_t i = 0; i < buffer_count; ++i) {
             if (readable_state[i]) {
                 continue;
             }
-            // Signal thread according to index. Audio for 0, 2 | Video for 1 | 3
+            SetEvent(order_ehandle[i]);
+            active_finished_ehandle[active_wthread_count] = finished_ehandle[i];
+            active_wthread_handles[active_wthread_count] = worker_thread_handles[i];
+            active_wthread_count++;
         }
-        // Wait for worker threads to finish.
-        Sleep(1);
+        if (active_wthread_count == 0) {
+            Sleep(1);
+            continue;
+        }
+
+        for (size_t i = 0; i < active_wthread_count; ++i) {
+            bool succeeded = false;
+            DWORD terminated = WAIT_TIMEOUT;
+            while (terminated == WAIT_TIMEOUT && !succeeded) {
+                terminated = WaitForSingleObject(active_wthread_handles[i], 10);
+                if (terminated == WAIT_TIMEOUT) {
+                    succeeded = WaitForSingleObject(active_finished_ehandle[i], 0) == WAIT_OBJECT_0;
+                }
+            }
+            if (terminated != WAIT_TIMEOUT) {
+                HANDLE pexit_handle = active_wthread_handles[i];
+                DWORD  wexit_code = 0;
+                CHECK(
+                    exit_code, !GetExitCodeThread(pexit_handle, &wexit_code), TL_OS_ERROR,
+                    goto epilogue
+                );
+                exit_code = (tl_result)wexit_code;
+                for (size_t j = 0; j < buffer_count; ++j) {
+                    SetEvent(shutdown_ehandle[j]);
+                }
+                goto epilogue;
+            }
+            ResetEvent(active_finished_ehandle[i]);
+        }
     }
 epilogue:
-    // Call threads once and shut them down.
+    for (size_t i = 0; i < initialized_wthreads; ++i) {
+        SetEvent(shutdown_ehandle[i]);
+    }
+    if (initialized_wthreads > 0) {
+        WaitForMultipleObjects((DWORD)initialized_wthreads, worker_thread_handles, TRUE, INFINITE);
+    }
+    for (size_t i = 0; i < buffer_count; ++i) {
+        if (worker_thread_handles && worker_thread_handles[i]) {
+            CloseHandle(worker_thread_handles[i]);
+        }
+        if (order_ehandle && order_ehandle[i]) {
+            CloseHandle(order_ehandle[i]);
+        }
+        if (shutdown_ehandle && shutdown_ehandle[i]) {
+            CloseHandle(shutdown_ehandle[i]);
+        }
+        if (finished_ehandle && finished_ehandle[i]) {
+            CloseHandle(finished_ehandle[i]);
+        }
+        if (worker_thread_data && worker_thread_data[i]) {
+            free(worker_thread_data[i]);
+        }
+    }
+    free(finished_ehandle);
+    free(order_ehandle);
+    free(shutdown_ehandle);
+    free(worker_thread_handles);
+    free(worker_thread_data);
     return exit_code;
 }
 
@@ -442,7 +483,7 @@ tl_result video_thread_exec(thread_data *thdata) {
 
 unsigned int __stdcall thread_dispatcher(void *data) {
     tl_result (*dispatch[WORKER_THREAD_COUNT])(thread_data *) = {
-        audio_thread_exec, video_thread_exec, proc_thread_exec
+        audio_thread_exec, proc_thread_exec, video_thread_exec
     };
     thread_data *data_arg = (thread_data *)data;
     tl_result    exec_code = dispatch[data_arg->thread_id](data_arg);
@@ -450,11 +491,8 @@ unsigned int __stdcall thread_dispatcher(void *data) {
 }
 
 unsigned int __stdcall helper_thread_dispatcher(void *data) {
-    tl_result (*dispatch[BUFFER_COUNT])(wthread_data *) = {
-        audio_helper_thread_exec, video_helper_thread_exec, audio_helper_thread_exec,
-        video_helper_thread_exec
-    };
+    tl_result (*dispatch[2])(wthread_data *) = {audio_helper_thread_exec, video_helper_thread_exec};
     wthread_data *wthdta = (wthread_data *)data;
-    tl_result     exec_code = dispatch[wthdta->wthread_id - 1](wthdta);
+    tl_result     exec_code = dispatch[wthdta->wthread_id < 2 ? 0 : 1](wthdta);
     return exec_code;
 }

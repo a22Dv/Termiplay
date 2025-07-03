@@ -29,8 +29,7 @@
 
 #define POLLING_RATE_MS 50
 #define SEEK_SPEEDS 8
-#define BUFFER_COUNT 4
-#define VIDEO_FLAG_OFFSET 4
+#define MAX_BUFFER_COUNT 4
 
 /// @brief Executes the actual application.
 /// @param media_path Path to media file.

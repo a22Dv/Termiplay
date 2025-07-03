@@ -30,6 +30,7 @@ int main() {
         return exit_code
     );
 
+    
     DWORD prev_stdin_mode = 0;
     DWORD prev_stdout_mode = 0;
     CHECK(
@@ -50,6 +51,8 @@ int main() {
 
     bool ffmpeg_exists = system("ffmpeg -version 2> NUL 1> NUL") == 0;
     CHECK(exit_code, !ffmpeg_exists, TL_FFMPEG_NOT_FOUND, return TL_FFMPEG_NOT_FOUND);
+
+    // Entry point.
     TRY(exit_code, app_exec(argv[1]), return exit_code);
 
     CHECK(exit_code, !SetConsoleMode(stdin_h, prev_stdin_mode), TL_CONSOLE_ERROR, return exit_code);

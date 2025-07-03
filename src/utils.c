@@ -30,6 +30,7 @@ tl_result is_valid_file(
             goto epilogue;
         }
     }
+    // Trim according to size. +1 for \0.
     WCHAR *temp_block = realloc(rpath_buf, (ret + 1) * sizeof(WCHAR));
     CHECK(exit_code, temp_block == NULL, TL_ALLOC_FAILURE, goto epilogue);
     *resolved_path = temp_block;
@@ -57,6 +58,7 @@ tl_result get_stream_count(
         media_path
     );
     CHECK(exit_code, ret < 0 || ret >= BUFFER_SIZE, TL_FORMAT_FAILURE, return exit_code);
+
     FILE *pipe = NULL;
     pipe = _wpopen(cmd_buffer, L"r");
     CHECK(exit_code, pipe == NULL, TL_PIPE_OPEN_FAILURE, return exit_code);
@@ -74,10 +76,10 @@ tl_result get_stream_count(
     for (size_t offset = 0; *(rbuf + offset) != '\0'; offset += (strlen(rbuf + offset) + 1)) {
         if (strcmp("video", rbuf + offset) == 0) {
             vstreams += 1;
-            *streams |= 0x10;
+            *streams |= 0x01;
         } else if ((strcmp("audio", rbuf + offset) == 0)) {
             astreams += 1;
-            *streams |= 0x01;
+            *streams |= 0x10;
         }
     }
     CHECK(exit_code, vstreams >= 2 || astreams >= 2, TL_INVALID_FILE, return exit_code);
@@ -91,6 +93,7 @@ tl_result get_metadata(
 ) {
     tl_result exit_code = TL_SUCCESS;
     CHECK(exit_code, media_path == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, streams == 0x00, TL_INVALID_ARGUMENT, return exit_code);
     CHECK(exit_code, mtptr == NULL, TL_NULL_ARGUMENT, return exit_code);
     CHECK(exit_code, *mtptr != NULL, TL_OVERWRITE, return exit_code);
 
@@ -124,7 +127,7 @@ tl_result get_metadata(
     uint8_t  fps = 0;
 
     // Audio only.
-    if (!(streams >> 4)) {
+    if (!(streams & AUDIO_PRESENT)) {
         mt->duration = duration;
         mt->height = height;
         mt->width = width;
@@ -181,70 +184,33 @@ tl_result create_thread_data(
     CHECK(exit_code, thptr == NULL, TL_NULL_ARGUMENT, return exit_code);
     CHECK(exit_code, *thptr != NULL, TL_OVERWRITE, return exit_code);
     CHECK(exit_code, pstate == NULL, TL_NULL_ARGUMENT, return exit_code);
-
-    bool has_audio = streams & 0x01;
-    bool has_video = (streams >> 4) & 0x01;
-    CHECK(exit_code, !has_audio && !has_video, TL_INVALID_ARGUMENT, return exit_code);
-
-    thread_data **data_arr = malloc(sizeof(thread_data *) * WORKER_THREAD_COUNT);
+    CHECK(exit_code, mtdta == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, abuf1 == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, abuf2 == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, streams == 0x00, TL_INVALID_ARGUMENT, return exit_code);
+    bool          has_audio = streams & VIDEO_PRESENT;
+    bool          has_video = streams & AUDIO_PRESENT;
+    size_t        thread_count = WORKER_THREAD_COUNT - (has_video ? 0 : 1);
+    thread_data **data_arr = malloc(sizeof(thread_data *) * thread_count);
     CHECK(exit_code, data_arr == NULL, TL_ALLOC_FAILURE, return exit_code);
+    memset(data_arr, 0, sizeof(thread_data *) * thread_count);
 
-    // External cleanup logic relies on NULL-ed allocations. Do not remove.
-    memset(data_arr, 0, sizeof(thread_data *) * WORKER_THREAD_COUNT);
-
-    thread_data *proc_thdata = NULL;
-    thread_data *video_thdata = NULL;
-    thread_data *audio_thdata = NULL;
-
-    proc_thdata = malloc(sizeof(thread_data));
-    CHECK(exit_code, proc_thdata == NULL, TL_ALLOC_FAILURE, goto epilogue);
-
-    proc_thdata->audio_buffer1 = abuf1;
-    proc_thdata->audio_buffer2 = abuf2;
-    proc_thdata->pstate = pstate;
-    proc_thdata->thread_id = PROC_THREAD_ID;
-    proc_thdata->video_buffer1 = vbuf1;
-    proc_thdata->video_buffer2 = vbuf2;
-    proc_thdata->mtdta = mtdta;
-    data_arr[PROC_THREAD_ID] = proc_thdata;
-
-    if (has_audio) {
-        CHECK(exit_code, abuf1 == NULL, TL_NULL_ARGUMENT, goto epilogue);
-        CHECK(exit_code, abuf2 == NULL, TL_NULL_ARGUMENT, goto epilogue);
-
-        audio_thdata = malloc(sizeof(thread_data));
-        CHECK(exit_code, audio_thdata == NULL, TL_ALLOC_FAILURE, goto epilogue);
-
-        audio_thdata->audio_buffer1 = abuf1;
-        audio_thdata->audio_buffer2 = abuf2;
-        audio_thdata->pstate = pstate;
-        audio_thdata->thread_id = AUDIO_THREAD_ID;
-        audio_thdata->video_buffer1 = vbuf1;
-        audio_thdata->video_buffer2 = vbuf2;
-        audio_thdata->mtdta = mtdta;
-        data_arr[AUDIO_THREAD_ID] = audio_thdata;
-    }
-
-    if (has_video) {
-        CHECK(exit_code, vbuf1 == NULL, TL_NULL_ARGUMENT, goto epilogue);
-        CHECK(exit_code, vbuf2 == NULL, TL_NULL_ARGUMENT, goto epilogue);
-
-        video_thdata = malloc(sizeof(thread_data));
-        CHECK(exit_code, video_thdata == NULL, TL_ALLOC_FAILURE, goto epilogue);
-
-        video_thdata->audio_buffer1 = abuf1;
-        video_thdata->audio_buffer2 = abuf2;
-        video_thdata->pstate = pstate;
-        video_thdata->thread_id = VIDEO_THREAD_ID;
-        video_thdata->video_buffer1 = vbuf1;
-        video_thdata->video_buffer2 = vbuf2;
-        video_thdata->mtdta = mtdta;
-        data_arr[VIDEO_THREAD_ID] = video_thdata;
+    const uint8_t th_id[3] = {AUDIO_THREAD_ID, PROC_THREAD_ID, VIDEO_THREAD_ID};
+    for (size_t i = 0; i < thread_count; ++i) {
+        data_arr[th_id[i]] = malloc(sizeof(thread_data));
+        CHECK(exit_code, data_arr[th_id[i]] == NULL, TL_ALLOC_FAILURE, goto epilogue);
+        data_arr[th_id[i]]->audio_buffer1 = abuf1;
+        data_arr[th_id[i]]->audio_buffer2 = abuf2;
+        data_arr[th_id[i]]->pstate = pstate;
+        data_arr[th_id[i]]->thread_id = th_id[i];
+        data_arr[th_id[i]]->video_buffer1 = vbuf1;
+        data_arr[th_id[i]]->video_buffer2 = vbuf2;
+        data_arr[th_id[i]]->mtdta = mtdta;
     }
     *thptr = data_arr;
 epilogue:
     if (exit_code != TL_SUCCESS) {
-        for (size_t i = 0; i < WORKER_THREAD_COUNT; ++i) {
+        for (size_t i = 0; i < thread_count; ++i) {
             free(data_arr[i]);
         }
         free(data_arr);
@@ -284,13 +250,17 @@ tl_result create_player_state(player_state **pl_state_ptr) {
 
 tl_result create_wthread_data(
     thread_data   *thdta,
-    HANDLE        order_event,
+    HANDLE         order_event,
+    HANDLE         finish_event,
+    HANDLE shutdown_event,
     uint8_t        wthread_id,
     wthread_data **wth_ptr
 ) {
     tl_result exit_code = TL_SUCCESS;
     CHECK(exit_code, thdta == NULL, TL_NULL_ARGUMENT, return exit_code);
     CHECK(exit_code, order_event == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, finish_event == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, shutdown_event == NULL, TL_NULL_ARGUMENT, return exit_code);
     CHECK(
         exit_code, wthread_id < LOWEST_WTHREAD_ID || wthread_id > HIGHEST_WTHREAD_ID,
         TL_INVALID_ARGUMENT, return exit_code
@@ -298,10 +268,12 @@ tl_result create_wthread_data(
     CHECK(exit_code, wth_ptr == NULL, TL_NULL_ARGUMENT, return exit_code);
     CHECK(exit_code, *wth_ptr != NULL, TL_OVERWRITE, return exit_code);
 
-    wthread_data* wthdta = malloc(sizeof(wthread_data));
+    wthread_data *wthdta = malloc(sizeof(wthread_data));
     CHECK(exit_code, wthdta == NULL, TL_ALLOC_FAILURE, goto epilogue);
 
     wthdta->order_event = order_event;
+    wthdta->finish_event = finish_event;
+    wthdta->shutdown_event = shutdown_event;
     wthdta->thdata = thdta;
     wthdta->wthread_id = wthread_id;
     *wth_ptr = wthdta;

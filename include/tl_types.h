@@ -7,12 +7,17 @@
 #define CHANNEL_COUNT 2
 
 #define AUDIO_THREAD_ID 0
-#define VIDEO_THREAD_ID 1
-#define PROC_THREAD_ID 2
+#define PROC_THREAD_ID 1
+#define VIDEO_THREAD_ID 2
 #define WORKER_THREAD_COUNT 3
 
 #define CHARSET_1 " `.-':_,^=;><+!rc*/z?sLTv)J7}fI31tlu[neoZ5Yxjya24VpOGbUAKXHm8RD#$Bg0MNWQ&@"
 #define CHARSET_2 "▀"
+
+#define VIDEO_FLAG_OFFSET 4
+#define AUDIO_FLAG_OFFSET 0
+#define VIDEO_PRESENT (1 << 4)
+#define AUDIO_PRESENT (1)
 
 /// @brief Basic video metadata.
 typedef struct metadata {
@@ -24,7 +29,7 @@ typedef struct metadata {
     WCHAR   *media_path;
 } metadata;
 
-/// BUG: REMOVE UNDERFLOW FLAGS. 
+/// BUG: REMOVE UNDERFLOW FLAGS.
 
 /// @brief Active player state.
 typedef struct player_state {
@@ -59,8 +64,10 @@ typedef struct thread_data {
 
 /// @brief Worker thread data.
 typedef struct wthread_data {
-    thread_data* thdata;
-    HANDLE order_event;
-    uint8_t wthread_id;
+    thread_data *thdata;
+    HANDLE       order_event;
+    HANDLE       finish_event;
+    HANDLE       shutdown_event;
+    uint8_t      wthread_id;
 } wthread_data;
 #endif

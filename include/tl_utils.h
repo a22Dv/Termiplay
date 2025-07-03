@@ -2,19 +2,19 @@
 #define TL_UTILS
 #include <Windows.h>
 #include <PathCch.h>
+#include <float.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <float.h>
 #include "tl_errors.h"
 #include "tl_types.h"
 
 #define BUFFER_SIZE 1024
 #define WCHAR_PATH_MAX 512
-#define LOWEST_WTHREAD_ID 1
-#define HIGHEST_WTHREAD_ID 4
+#define LOWEST_WTHREAD_ID 0
+#define HIGHEST_WTHREAD_ID 3
 /// @brief Checks if a file is valid and passes the full resolved path if so. NULL otherwise.
 /// @param media_path Path to validate.
 /// @param resolved_path NULL-ed pointer to hold the path.
@@ -42,7 +42,7 @@ tl_result get_stream_count(
 /// @param mtptr Pointer to store result.
 /// @return Return code.
 tl_result get_metadata(
-    WCHAR  *media_path,
+    WCHAR        *media_path,
     const uint8_t streams,
     metadata    **mtptr
 );
@@ -58,13 +58,13 @@ tl_result get_metadata(
 /// @param thptr Out-parameter to store result.
 /// @return Return code.
 tl_result create_thread_data(
-    uint8_t       streams,
-    int16_t      *abuf1,
-    int16_t      *abuf2,
-    char        **vbuf1,
-    char        **vbuf2,
-    player_state *pstate,
-    metadata*      mtdta,
+    uint8_t        streams,
+    int16_t       *abuf1,
+    int16_t       *abuf2,
+    char         **vbuf1,
+    char         **vbuf2,
+    player_state  *pstate,
+    metadata      *mtdta,
     thread_data ***thptr
 );
 
@@ -75,18 +75,21 @@ tl_result create_player_state(player_state **pl_state_ptr);
 
 /// @brief Creates a heap-allocated helper thread data.
 /// @param thdta Thread data.
-/// @param order_event Pointer to HANDLE to signal to wake thread.
+/// @param order_event HANDLE to signal to wake thread.
+/// @param finish_event HANDLE to signal a worker is finished
 /// @param wthread_id Worker thread ID.
 /// @param wth_ptr Pointer to store heap-allocated result.
 /// @return Return code.
 tl_result create_wthread_data(
-    thread_data* thdta,
-    HANDLE order_event,
-    uint8_t wthread_id,
-    wthread_data** wth_ptr
+    thread_data   *thdta,
+    HANDLE         order_event,
+    HANDLE         finish_event,
+    HANDLE         shutdown_event,
+    uint8_t        wthread_id,
+    wthread_data **wth_ptr
 );
 /// @brief Prints state to console.
 /// @param pstate Player state.
-void state_print(player_state* plstate);
+void state_print(player_state *plstate);
 
 #endif
