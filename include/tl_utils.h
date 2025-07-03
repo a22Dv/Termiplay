@@ -92,4 +92,15 @@ tl_result create_wthread_data(
 /// @param pstate Player state.
 void state_print(player_state *plstate);
 
+
+/// @brief Dispatches threads via `_beginthreadex`.
+/// @param data Thread data.
+/// @return `unsigned int` (Required for _beginthreadex)
+unsigned int __stdcall thread_dispatcher(void *data);
+
+/// @brief Dispatches threads via `_beginthreadex` specifically for helper worker threads.
+/// @param data Worker thread data.
+/// @return `unsigned int` (Required for _beginthreadex)
+unsigned int __stdcall helper_thread_dispatcher(void *data);
+
 #endif

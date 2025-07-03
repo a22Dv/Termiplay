@@ -8,6 +8,7 @@ set(SRC
     src/main.c
     src/utils.c
     src/proc.c
+    src/audio.c
 )
 set(TST
     tests/test.c

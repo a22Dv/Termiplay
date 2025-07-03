@@ -22,8 +22,9 @@
     X(TL_CONSOLE_ERROR, "CONSOLE ERROR")                                                           \
     X(TL_OUTDATED_SERIAL, "OUTDATED_SERIAL")                                                       \
     X(TL_FAILED_TO_RETRIEVE_THREAD_EXIT_CODE, "COULD NOT RETRIEVE THREAD EXIT CODE")               \
-    X(TL_OS_ERROR, "OS ERROR")
-    
+    X(TL_OS_ERROR, "OS ERROR")                                                                     \
+    X(TL_MA_ERROR, "MINIAUDIO ERROR")
+
 /// @brief Return/Exit code.
 typedef enum tl_result {
 #define X(err, str_err) err,

@@ -1,6 +1,7 @@
 #ifndef TL_TYPES
 #define TL_TYPES
 #include <stdint.h>
+#include <Windows.h>
 
 #define AUDIO_SAMPLE_RATE 48000
 #define VIDEO_FPS 30
@@ -16,8 +17,23 @@
 
 #define VIDEO_FLAG_OFFSET 4
 #define AUDIO_FLAG_OFFSET 0
-#define VIDEO_PRESENT (1 << 4)
-#define AUDIO_PRESENT (1)
+#define VIDEO_PRESENT (1)
+#define AUDIO_PRESENT (1 << 4)
+
+#define LOOP 'l'
+#define MUTE 'm'
+#define TOGGLE_CHARSET 'c'
+#define TOGGLE_PLAYBACK ' '
+#define QUIT 'q'
+#define EXTENDED 0xE0
+#define ARROW_UP 72
+#define ARROW_DOWN 80
+#define ARROW_LEFT 75
+#define ARROW_RIGHT 77
+
+#define POLLING_RATE_MS 50
+#define SEEK_SPEEDS 8
+#define MAX_BUFFER_COUNT 4
 
 /// @brief Basic video metadata.
 typedef struct metadata {

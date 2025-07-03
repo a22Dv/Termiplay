@@ -53,7 +53,7 @@ tl_result get_stream_count(
     char  rbuf[BUFFER_SIZE];
     int   ret = swprintf(
         cmd_buffer, BUFFER_SIZE,
-        L"ffprobe -v error -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 "
+        L"ffprobe -v error -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 -v quiet "
         L"\"%ls\"",
         media_path
     );
@@ -107,7 +107,7 @@ tl_result get_metadata(
 
     int ret = swprintf(
         cmd_buffer, BUFFER_SIZE,
-        L"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "
+        L"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 -v quiet "
         L"\"%ls\"",
         media_path
     );
@@ -127,7 +127,7 @@ tl_result get_metadata(
     uint8_t  fps = 0;
 
     // Audio only.
-    if (!(streams & AUDIO_PRESENT)) {
+    if (!(streams & VIDEO_PRESENT)) {
         mt->duration = duration;
         mt->height = height;
         mt->width = width;
@@ -141,7 +141,7 @@ tl_result get_metadata(
     ret = swprintf(
         cmd_buffer, BUFFER_SIZE,
         L"ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate -of "
-        L"default=noprint_wrappers=1:nokey=1 "
+        L"default=noprint_wrappers=1:nokey=1  -v quiet "
         L"\"%ls\"",
         media_path
     );
@@ -303,3 +303,4 @@ void state_print(player_state *plstate) {
         plstate->vbuffer2_readable ? " TRUE" : "FALSE"
     );
 }
+
