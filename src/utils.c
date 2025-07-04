@@ -53,7 +53,8 @@ tl_result get_stream_count(
     char  rbuf[BUFFER_SIZE];
     int   ret = swprintf(
         cmd_buffer, BUFFER_SIZE,
-        L"ffprobe -v error -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 -v quiet "
+        L"ffprobe -v error -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 "
+        L"-v quiet "
         L"\"%ls\"",
         media_path
     );
@@ -107,7 +108,8 @@ tl_result get_metadata(
 
     int ret = swprintf(
         cmd_buffer, BUFFER_SIZE,
-        L"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 -v quiet "
+        L"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 -v "
+        L"quiet "
         L"\"%ls\"",
         media_path
     );
@@ -252,7 +254,8 @@ tl_result create_wthread_data(
     thread_data   *thdta,
     HANDLE         order_event,
     HANDLE         finish_event,
-    HANDLE shutdown_event,
+    HANDLE         shutdown_event,
+    char          *uncomp_fbuffer,
     uint8_t        wthread_id,
     wthread_data **wth_ptr
 ) {
@@ -276,6 +279,10 @@ tl_result create_wthread_data(
     wthdta->shutdown_event = shutdown_event;
     wthdta->thdata = thdta;
     wthdta->wthread_id = wthread_id;
+    wthdta->uncomp_fbuffer = uncomp_fbuffer;
+    if (wthread_id == 3) {
+        wthdta->uncomp_fbuffer = &uncomp_fbuffer[MAX_INDIV_FRAMEBUF_UNCOMP_SIZE];
+    }
     *wth_ptr = wthdta;
 
 epilogue:
@@ -303,4 +310,3 @@ void state_print(player_state *plstate) {
         plstate->vbuffer2_readable ? " TRUE" : "FALSE"
     );
 }
-

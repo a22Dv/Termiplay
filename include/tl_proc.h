@@ -1,14 +1,17 @@
 #ifndef TL_PROC
 #define TL_PROC
 
+#include <Windows.h>
 #include <process.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include "Windows.h"
+#include "lz4.h"
 #include "tl_errors.h"
 #include "tl_types.h"
 #include "tl_utils.h"
 
+#define RGB_CHAR "▀"
+#define BRAILLE_OFFSET "⠀"
 #define WORKER_A1 0
 #define WORKER_A2 1
 #define WORKER_V1 2
@@ -52,6 +55,7 @@ tl_result write_vbuffer_compressed(
     const double  clock_start,
     const WCHAR  *media_path,
     const uint8_t streams,
+    char         *uncomp_fbuffer,
     char        **buffer,
     const bool    default_charset
 );
@@ -68,17 +72,24 @@ tl_result video_helper_thread_exec(wthread_data *worker_thdata);
 
 /// @brief Encodes a frame into an uncompressed char*.
 /// @param frame_start Pointer to start of frame data.
-/// @param frame_size Amount of data in each frame, including channels. [H*W*C].
+/// @param height Height in pixels.
+/// @param width in pixels.
+/// @param color_channels Color channels per pixel.
 /// @param default_charset Whether to use the default character set or no.
-/// @param keyframe  Passing NULL will make the function return a full keyframe. A delta otherwise.
+/// @param reference_frame  Passing NULL will make the function return a full keyframe. A delta
+/// otherwise.
 /// @param frame Where to store the result.
 /// @return Return code.
 tl_result frame_encode(
     uint8_t *frame_start,
-    size_t   frame_size,
+    size_t   height,
+    size_t   width,
+    size_t   color_channels,
     bool     default_charset,
-    uint8_t *keyframe,
-    char   **frame
+    uint8_t *reference_frame,
+    char    *uncomp_fbuffer,
+    char   **frame,
+    size_t  *out_bytes_written
 );
 
 /// @brief Compresses a frame using LZ4.
@@ -86,7 +97,46 @@ tl_result frame_encode(
 /// @param compressed_out NULL-ed location to store compressed frame
 /// @return Return code.
 tl_result frame_compress(
-    char* frame,
-    char** compressed_out
+    char   *frame,
+    char  **compressed_out,
+    size_t  frame_size_bytes
 );
+
+/// @brief
+/// @param frame_start
+/// @param height
+/// @param width
+/// @param reference_frame
+/// @param uncomp_fbuffer
+/// @param frame
+/// @return
+tl_result _frame_encode_braille(
+    uint8_t *frame_start,
+    size_t   height,
+    size_t   width,
+    uint8_t *reference_frame,
+    char    *uncomp_fbuffer,
+    char   **frame,
+    size_t  *out_bytes_written
+);
+
+tl_result _frame_encode_rgb(
+    uint8_t *frame_start,
+    size_t   height,
+    size_t   width,
+    uint8_t *reference_frame,
+    char    *uncomp_fbuffer,
+    char   **frame,
+    size_t  *out_bytes_written
+);
+
+/// @brief Retrieves a braille character based on two pixel values.
+/// @param tp_v Top pixel value.
+/// @param bot_v Bottom pixel value.
+/// @return Braille character in a `wchar_t`.
+wchar_t get_braille(
+    uint8_t tp_v,
+    uint8_t bot_v
+);
+
 #endif

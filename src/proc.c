@@ -10,6 +10,9 @@ tl_result proc_thread_exec(thread_data *thdata) {
     const size_t  buffer_count = MAX_BUFFER_COUNT - ((media_streams & VIDEO_PRESENT ? 0 : 1) * 2);
     size_t        serial_acknowledged = 0;
 
+    char *uncompressed_fbuffer =
+        media_streams & VIDEO_PRESENT ? malloc(MAX_INDIV_FRAMEBUF_UNCOMP_SIZE * 2) : NULL;
+
     HANDLE active_finished_ehandle[MAX_BUFFER_COUNT] = {NULL, NULL, NULL, NULL};
     HANDLE active_wthread_handles[MAX_BUFFER_COUNT] = {NULL, NULL, NULL, NULL};
     size_t active_wthread_count = 0;
@@ -49,8 +52,8 @@ tl_result proc_thread_exec(thread_data *thdata) {
         CHECK(exit_code, shutdown_ehandle[i] == INVALID_HANDLE_VALUE, TL_OS_ERROR, goto epilogue);
         TRY(exit_code,
             create_wthread_data(
-                thdata, order_ehandle[i], finished_ehandle[i], shutdown_ehandle[i], thread_ids[i],
-                &worker_thread_data[i]
+                thdata, order_ehandle[i], finished_ehandle[i], shutdown_ehandle[i],
+                uncompressed_fbuffer, thread_ids[i], &worker_thread_data[i]
             ),
             goto epilogue);
         worker_thread_handles[i] = (HANDLE)_beginthreadex(
@@ -163,6 +166,7 @@ epilogue:
     free(shutdown_ehandle);
     free(worker_thread_handles);
     free(worker_thread_data);
+    free(uncompressed_fbuffer);
     return exit_code;
 }
 
@@ -219,12 +223,12 @@ epilogue:
 }
 
 tl_result write_vbuffer_compressed(
-    const size_t serial_at_call,
-    thread_data *thdata,
-    const double clock_start,
-    const WCHAR *media_path,
-
+    const size_t  serial_at_call,
+    thread_data  *thdata,
+    const double  clock_start,
+    const WCHAR  *media_path,
     const uint8_t streams,
+    char         *uncomp_fbuffer,
     char        **buffer,
     const bool    default_charset
 ) {
@@ -263,9 +267,11 @@ tl_result write_vbuffer_compressed(
     }
 
     wchar_t command[COMMAND_BUFFER_SIZE];
-    int     ret = swprintf(
+    int ret = swprintf_s(command, COMMAND_BUFFER_SIZE, L"");
+    ret = swprintf_s(
         command, COMMAND_BUFFER_SIZE,
-        L"ffmpeg -ss %lf -i \"%ls\" -vframes %i -r %i -vf scale=%llu:%llu:flags=%ls -pix_fmt %ls "
+        L"ffmpeg -ss %lf -i \"%ls\" -vframes %i -r %i -f rawvideo -vf scale=%llu:%llu:flags=%ls "
+        L"-pix_fmt %ls "
         L"-an "
         L"-v error -",
         clock_start, media_path, VIDEO_FPS, VIDEO_FPS, f_width, f_height, L"lanczos",
@@ -284,6 +290,7 @@ tl_result write_vbuffer_compressed(
     uint8_t     *frame_buffer = malloc(bytes_expected_per_frame);
     CHECK(exit_code, frame_buffer == NULL, TL_ALLOC_FAILURE, return exit_code);
     CHECK(exit_code, reference_fbuffer == NULL, TL_ALLOC_FAILURE, return exit_code);
+
     for (size_t i = 0; i < VIDEO_FPS; ++i) {
         size_t bytes_read = fread(frame_buffer, sizeof(uint8_t), bytes_expected_per_frame, pipe);
         CHECK(
@@ -294,30 +301,22 @@ tl_result write_vbuffer_compressed(
         const size_t state_serial = thdata->pstate->current_serial;
         ReleaseSRWLockShared(&thdata->pstate->srw);
         CHECK(exit_code, state_serial != serial_at_call, TL_OUTDATED_SERIAL, goto epilogue);
-        char    *frame = NULL;
+        char  *frame = NULL;
+        size_t bytes_written = 0;
         TRY(exit_code,
             frame_encode(
-                frame_buffer, bytes_expected_per_frame, default_charset,
-                i == 0 ? NULL : reference_fbuffer, &frame
+                frame_buffer, f_height, f_width, color_channels, default_charset,
+                i == 0 ? NULL : reference_fbuffer, uncomp_fbuffer, &frame, &bytes_written
             ),
             goto epilogue);
-        TRY(exit_code, frame_compress(frame, &buffer[i]), goto epilogue);
+        TRY(exit_code, frame_compress(frame, &buffer[i], bytes_written), goto epilogue);
         memcpy(reference_fbuffer, frame_buffer, bytes_expected_per_frame);
         frames_processed += 1;
         if (feof(pipe)) {
             break;
         }
     }
-    if (frames_processed != VIDEO_FPS) {
-        // The convention is to treat NULL pointers as errors, therefore we
-        // need to allocate a filler frame with no bytes to differentiate between
-        // actual NULL frames vs. empty frames.
-        for (size_t i = 0; i < VIDEO_FPS - frames_processed; ++i) {
-            buffer[i + frames_processed] = malloc(sizeof(""));
-            CHECK(exit_code, buffer[i + frames_processed] == NULL, TL_ALLOC_FAILURE, goto epilogue);
-            *buffer[i + frames_processed] = '\0';
-        }
-    }
+    // If it's somehow cut off, NULL pointers are treated as a blank screen.
 epilogue:
     if (pipe != NULL) {
         _pclose(pipe);
@@ -358,7 +357,10 @@ tl_result audio_helper_thread_exec(wthread_data *worker_thdata) {
                 clock_start + (worker_thdata->wthread_id == WORKER_A1 ? 0.0 : 1.0), media_path,
                 worker_thdata->thdata->mtdta->streams_mask, target_buffer
             ),
-            break);
+            break); // break; is a no-op due to do-while(0) macro.
+        if (exit_code != TL_SUCCESS && exit_code != TL_OUTDATED_SERIAL) {
+            break;
+        }
         AcquireSRWLockExclusive(&worker_thdata->thdata->pstate->srw);
         if (worker_thdata->thdata->pstate->current_serial == serial) {
             *target_readable_flag = true;
@@ -401,9 +403,13 @@ tl_result video_helper_thread_exec(wthread_data *worker_thdata) {
             write_vbuffer_compressed(
                 serial, worker_thdata->thdata,
                 clock_start + (worker_thdata->wthread_id == WORKER_V1 ? 0.0 : 1.0), media_path,
-                worker_thdata->thdata->mtdta->streams_mask, target_buffer, default_charset
+                worker_thdata->thdata->mtdta->streams_mask, worker_thdata->uncomp_fbuffer,
+                target_buffer, default_charset
             ),
-            break);
+            break); // break; is a no-op due to do-while(0) macro.
+        if (exit_code != TL_SUCCESS && exit_code != TL_OUTDATED_SERIAL) {
+            break;
+        }
         AcquireSRWLockExclusive(&worker_thdata->thdata->pstate->srw);
         if (worker_thdata->thdata->pstate->current_serial == serial) {
             *target_readable_flag = true;
@@ -416,18 +422,165 @@ tl_result video_helper_thread_exec(wthread_data *worker_thdata) {
 
 tl_result frame_encode(
     uint8_t *frame_start,
-    size_t   frame_size,
+    size_t   height,
+    size_t   width,
+    size_t   color_channels,
     bool     default_charset,
-    uint8_t *keyframe,
-    char   **frame
+    uint8_t *reference_frame,
+    char    *uncomp_fbuffer,
+    char   **frame,
+    size_t  *out_bytes_written
+) {
+    tl_result exit_code = TL_SUCCESS;
+    CHECK(exit_code, frame_start == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, frame == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, *frame != NULL, TL_OVERWRITE, return exit_code);
+    CHECK(exit_code, height == 0, TL_INVALID_ARGUMENT, return exit_code);
+    CHECK(exit_code, width == 0, TL_INVALID_ARGUMENT, return exit_code);
+    CHECK(
+        exit_code, color_channels != 1 && color_channels != 3, TL_INVALID_ARGUMENT, return exit_code
+    );
+    CHECK(exit_code, (height & 1) != 0, TL_INVALID_ARGUMENT, return exit_code);
+    CHECK(exit_code, uncomp_fbuffer == NULL, TL_NULL_ARGUMENT, return exit_code);
+
+    bool output_reference_frame = reference_frame == NULL;
+    if (default_charset) {
+        TRY(exit_code,
+            _frame_encode_braille(
+                frame_start, height, width, reference_frame, uncomp_fbuffer, frame,
+                out_bytes_written
+            ),
+            return exit_code);
+    } else {
+        TRY(exit_code,
+            _frame_encode_rgb(
+                frame_start, height, width, reference_frame, uncomp_fbuffer, frame,
+                out_bytes_written
+            ),
+            return exit_code);
+    }
+    return exit_code;
+}
+
+tl_result _frame_encode_braille(
+    uint8_t *frame_start,
+    size_t   height,
+    size_t   width,
+    uint8_t *reference_frame,
+    char    *uncomp_fbuffer,
+    char   **frame,
+    size_t  *out_bytes_written
+) {
+    tl_result exit_code = TL_SUCCESS;
+    CHECK(exit_code, frame_start == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, height == 0, TL_INVALID_ARGUMENT, return exit_code);
+    CHECK(exit_code, width == 0, TL_INVALID_ARGUMENT, return exit_code);
+    CHECK(exit_code, uncomp_fbuffer == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, frame == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, *frame != NULL, TL_OVERWRITE, return exit_code);
+    size_t prev_row = 0;
+    size_t chars_proc = 0;
+    for (size_t row = 1; row < height; row += 2) {
+        prev_row = row - 1;
+        for (size_t cell = 0; cell < width; ++cell) {
+            if (!reference_frame || frame_start[row + cell] != reference_frame[row + cell] ||
+                frame_start[prev_row + cell] != reference_frame[prev_row + cell]) {
+                wchar_t braille =
+                    get_braille(frame_start[prev_row + cell], frame_start[row + cell]);
+                ((wchar_t *)uncomp_fbuffer)[chars_proc] = braille;
+            } else {
+                ((wchar_t *)uncomp_fbuffer)[chars_proc] = L' ';
+            }
+            chars_proc += 1;
+        }
+    }
+    *frame = malloc(chars_proc * sizeof(wchar_t));
+    CHECK(exit_code, *frame == NULL, TL_ALLOC_FAILURE, return exit_code);
+    memcpy(*frame, uncomp_fbuffer, chars_proc * sizeof(wchar_t));
+    *out_bytes_written = chars_proc * sizeof(wchar_t);
+    return exit_code;
+}
+
+wchar_t get_braille(
+    uint8_t tp_v,
+    uint8_t bot_v
+) {
+    static const wchar_t bit_template = 0x2800;
+    wchar_t              out = bit_template;
+
+    if (tp_v < 20) {
+        (void)0;
+    } else if (tp_v < 120) {
+        out |= 0x0001;
+    } else if (tp_v < 180) {
+        out |= 0x0011;
+    } else if (tp_v < 220) {
+        out |= 0x0013;
+    } else {
+        out |= 0x001B;
+    }
+
+    if (bot_v < 20) {
+        (void)0;
+    } else if (bot_v < 120) {
+        out |= 0x0004;
+    } else if (bot_v < 180) {
+        out |= 0x0084;
+    } else if (bot_v < 220) {
+        out |= 0x00C4;
+    } else {
+        out |= 0x00E4;
+    }
+    return out;
+}
+
+tl_result _frame_encode_rgb(
+    uint8_t *frame_start,
+    size_t   height,
+    size_t   width,
+    uint8_t *reference_frame,
+    char    *uncomp_fbuffer,
+    char   **frame,
+    size_t  *out_bytes_written
 ) {
     return TL_SUCCESS;
 }
 
-
 tl_result frame_compress(
-    char* frame,
-    char** compressed_out
+    char  *frame,
+    char **compressed_out,
+    size_t frame_size_bytes
 ) {
-    return TL_SUCCESS;
+    tl_result exit_code = TL_SUCCESS;
+    CHECK(exit_code, frame == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, compressed_out == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, *compressed_out != NULL, TL_OVERWRITE, return exit_code);
+    CHECK(
+        exit_code, frame_size_bytes == 0 || frame_size_bytes >= LZ4_MAX_INPUT_SIZE, TL_INVALID_ARGUMENT,
+        return exit_code
+    );
+
+    int compress_bound = LZ4_compressBound((int)frame_size_bytes);
+    CHECK(exit_code, compress_bound < 1, TL_COMPRESS_ERROR, return exit_code);
+    *compressed_out = malloc(compress_bound * sizeof(char));
+    CHECK(exit_code, *compressed_out == NULL, TL_ALLOC_FAILURE, return exit_code);
+
+    int actual_compressed_size =
+        LZ4_compress_default(frame, *compressed_out, (int)frame_size_bytes, compress_bound);
+    CHECK(exit_code, actual_compressed_size < 0, TL_COMPRESS_ERROR, goto epilogue);
+
+    char *mem_block = malloc(sizeof(int) * 2 + actual_compressed_size * sizeof(char));
+    CHECK(exit_code, mem_block == NULL, TL_ALLOC_FAILURE, goto epilogue);
+
+    memcpy(mem_block, &actual_compressed_size, sizeof(int));
+    memcpy(mem_block + sizeof(int), &((int)frame_size_bytes), sizeof(int));
+    memcpy(mem_block + sizeof(int) * 2, *compressed_out, actual_compressed_size * sizeof(char));
+    free(*compressed_out);
+    *compressed_out = mem_block;
+epilogue:
+    if (exit_code != TL_SUCCESS) {
+        free(*compressed_out);
+        *compressed_out = NULL;
+    }
+    return exit_code;
 }

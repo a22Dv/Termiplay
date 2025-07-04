@@ -280,24 +280,6 @@ tl_result proc_input(
     return TL_SUCCESS;
 }
 
-tl_result video_thread_exec(thread_data *thdata) {
-    // TODO
-    while (true) {
-        AcquireSRWLockShared(&thdata->pstate->srw);
-        const bool shutdown_sig = thdata->pstate->shutdown;
-        ReleaseSRWLockShared(&thdata->pstate->srw);
-        if (shutdown_sig) {
-            break;
-        }
-        Sleep(900);
-        AcquireSRWLockExclusive(&thdata->pstate->srw);
-        thdata->pstate->vbuffer2_readable = false;
-        ReleaseSRWLockExclusive(&thdata->pstate->srw);
-    }
-    return TL_SUCCESS;
-}
-
-tl_result audio_thread_exec(thread_data *thdata);
 
 unsigned int __stdcall thread_dispatcher(void *data) {
     tl_result (*dispatch[WORKER_THREAD_COUNT])(thread_data *) = {

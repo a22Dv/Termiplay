@@ -12,6 +12,8 @@
 #include "tl_audio.h"
 #include "tl_errors.h"
 #include "tl_proc.h"
+#include "tl_audio.h"
+#include "tl_video.h"
 #include "tl_types.h"
 #include "tl_utils.h"
 
@@ -40,9 +42,4 @@ tl_result proc_input(
     const metadata *mtdta,
     player_state   *plstate
 );
-
-/// @brief Executes video thread.
-/// @param thdata Thread data.
-/// @return Thread exit code.
-tl_result video_thread_exec(thread_data *thdata);
 #endif

@@ -1,7 +1,8 @@
 #ifndef TL_TYPES
 #define TL_TYPES
-#include <stdint.h>
 #include <Windows.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 #define AUDIO_SAMPLE_RATE 48000
 #define VIDEO_FPS 30
@@ -31,6 +32,7 @@
 #define POLLING_RATE_MS 50
 #define SEEK_SPEEDS 8
 #define MAX_BUFFER_COUNT 4
+#define MAX_INDIV_FRAMEBUF_UNCOMP_SIZE 10'000'000
 
 /// @brief Basic video metadata.
 typedef struct metadata {
@@ -82,6 +84,7 @@ typedef struct wthread_data {
     HANDLE       finish_event;
     HANDLE       shutdown_event;
     uint8_t      wthread_id;
+    char     *uncomp_fbuffer;
 } wthread_data;
 
 #endif

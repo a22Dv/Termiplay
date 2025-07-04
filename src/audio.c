@@ -25,7 +25,7 @@ tl_result audio_thread_exec(thread_data *thdata) {
         Sleep(10);
     }
     ma_device_uninit(&audio_device);
-    return TL_SUCCESS;
+    return exit_code;
 }
 
 void callback(

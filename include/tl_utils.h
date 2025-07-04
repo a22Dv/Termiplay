@@ -85,13 +85,13 @@ tl_result create_wthread_data(
     HANDLE         order_event,
     HANDLE         finish_event,
     HANDLE         shutdown_event,
+    char          *uncomp_fbuffer,
     uint8_t        wthread_id,
     wthread_data **wth_ptr
 );
 /// @brief Prints state to console.
 /// @param pstate Player state.
 void state_print(player_state *plstate);
-
 
 /// @brief Dispatches threads via `_beginthreadex`.
 /// @param data Thread data.
