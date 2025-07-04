@@ -1,6 +1,5 @@
 {
   "dependencies": [
-    "libyaml",
     "lz4"
   ]
 }

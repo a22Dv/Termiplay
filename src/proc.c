@@ -110,7 +110,7 @@ tl_result proc_thread_exec(thread_data *thdata) {
         }
 
         for (size_t i = 0; i < active_wthread_count; ++i) {
-            bool succeeded = false;
+            bool  succeeded = false;
             DWORD terminated = WAIT_TIMEOUT;
             while (terminated == WAIT_TIMEOUT && !succeeded) {
                 terminated = WaitForSingleObject(active_wthread_handles[i], 10);
@@ -166,7 +166,6 @@ epilogue:
     return exit_code;
 }
 
-
 tl_result write_abuffer(
     const size_t  serial_at_call,
     player_state *pstate,
@@ -184,24 +183,32 @@ tl_result write_abuffer(
 
     int ret = swprintf(
         command, COMMAND_BUFFER_SIZE,
-        L"ffmpeg -ss %lf -i \"%ls\" -t 1 -f s16le -acodec pcm_s16le -ar %i -ac %i %s -v error - 2>NUL",
-        clock_start, media_path, AUDIO_SAMPLE_RATE, CHANNEL_COUNT, streams & VIDEO_PRESENT ? L"-vn" : L""
+        L"ffmpeg -ss %lf -i \"%ls\" -t 1 -f s16le -acodec pcm_s16le -ar %i -ac %i %s -v error - "
+        L"2>NUL",
+        clock_start, media_path, AUDIO_SAMPLE_RATE, CHANNEL_COUNT,
+        streams & VIDEO_PRESENT ? L"-vn" : L""
     );
     CHECK(exit_code, ret >= COMMAND_BUFFER_SIZE || ret < 0, TL_FORMAT_FAILURE, goto epilogue);
 
-    FILE* pipe = NULL;
+    FILE *pipe = NULL;
     pipe = _wpopen(command, L"rb");
     CHECK(exit_code, pipe == NULL, TL_PIPE_OPEN_FAILURE, goto epilogue);
-    
+
     size_t bytes_read = 0;
     while (true) {
-        size_t fbytes = fread(buffer + bytes_read, sizeof(char), sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE - bytes_read, pipe);
+        size_t fbytes = fread(
+            buffer + bytes_read, sizeof(char),
+            sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE - bytes_read, pipe
+        );
         if (fbytes == 0) {
             break;
-        } 
+        }
         bytes_read += fbytes;
     }
-    memset((char*)buffer + bytes_read, 0, sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE - bytes_read);
+    memset(
+        (char *)buffer + bytes_read, 0,
+        sizeof(int16_t) * CHANNEL_COUNT * AUDIO_SAMPLE_RATE - bytes_read
+    );
     int pexit_code = _pclose(pipe);
     CHECK(exit_code, pexit_code != 0 && bytes_read == 0, TL_PIPE_PROCESS_FAILURE, goto epilogue);
 epilogue:
@@ -212,15 +219,112 @@ epilogue:
 }
 
 tl_result write_vbuffer_compressed(
-    const size_t  serial_at_call,
-    player_state *pstate,
-    const double  clock_start,
-    const WCHAR  *media_path,
+    const size_t serial_at_call,
+    thread_data *thdata,
+    const double clock_start,
+    const WCHAR *media_path,
+
     const uint8_t streams,
     char        **buffer,
     const bool    default_charset
 ) {
     tl_result exit_code = TL_SUCCESS;
+    CHECK(exit_code, thdata == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, media_path == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, buffer == NULL, TL_NULL_ARGUMENT, return exit_code);
+    CHECK(exit_code, !(streams & VIDEO_PRESENT), TL_INVALID_ARGUMENT, return exit_code);
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+
+    // +1 for inclusive coordinates. * 2 as we use half-blocks for rendering.
+    const size_t cheight = (csbi.srWindow.Bottom - csbi.srWindow.Top + 1) * 2;
+    const size_t cwidth = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    const size_t vheight = thdata->mtdta->height;
+    const size_t vwidth = thdata->mtdta->width;
+
+    // Calculate aspect preserving box.
+    const double vaspect = (double)vwidth / (double)vheight;
+    const double caspect = (double)cwidth / (double)cheight;
+    size_t       f_width = 0;
+    size_t       f_height = 0;
+
+    if (caspect < vaspect) {
+        f_width = cwidth;
+        f_height = (size_t)((double)cwidth / (double)vaspect);
+
+    } else {
+        f_height = cheight;
+        f_width = (size_t)((double)cheight * (double)vaspect);
+    }
+    if (f_height & 1) {
+        // XOR-out to always have even numbers. Character cells are 1x2 "effective pixels".
+        f_height ^= 1;
+    }
+
+    wchar_t command[COMMAND_BUFFER_SIZE];
+    int     ret = swprintf(
+        command, COMMAND_BUFFER_SIZE,
+        L"ffmpeg -ss %lf -i \"%ls\" -vframes %i -r %i -vf scale=%llu:%llu:flags=%ls -pix_fmt %ls "
+        L"-an "
+        L"-v error -",
+        clock_start, media_path, VIDEO_FPS, VIDEO_FPS, f_width, f_height, L"lanczos",
+        default_charset ? L"gray" : L"rgb24"
+    );
+    CHECK(exit_code, ret < 0 || ret >= COMMAND_BUFFER_SIZE, TL_FORMAT_FAILURE, return exit_code);
+
+    FILE *pipe = NULL;
+    pipe = _wpopen(command, L"rb");
+    CHECK(exit_code, pipe == NULL, TL_PIPE_OPEN_FAILURE, return exit_code);
+
+    const size_t color_channels = default_charset ? 1 : 3;
+    const size_t bytes_expected_per_frame = f_height * f_width * color_channels * sizeof(uint8_t);
+    uint8_t      frames_processed = 0;
+    uint8_t     *reference_fbuffer = malloc(bytes_expected_per_frame);
+    uint8_t     *frame_buffer = malloc(bytes_expected_per_frame);
+    CHECK(exit_code, frame_buffer == NULL, TL_ALLOC_FAILURE, return exit_code);
+    CHECK(exit_code, reference_fbuffer == NULL, TL_ALLOC_FAILURE, return exit_code);
+    for (size_t i = 0; i < VIDEO_FPS; ++i) {
+        size_t bytes_read = fread(frame_buffer, sizeof(uint8_t), bytes_expected_per_frame, pipe);
+        CHECK(
+            exit_code, (bytes_read != bytes_expected_per_frame) && (!feof(pipe) || bytes_read != 0),
+            TL_PIPE_PROCESS_FAILURE, goto epilogue
+        );
+        AcquireSRWLockShared(&thdata->pstate->srw);
+        const size_t state_serial = thdata->pstate->current_serial;
+        ReleaseSRWLockShared(&thdata->pstate->srw);
+        CHECK(exit_code, state_serial != serial_at_call, TL_OUTDATED_SERIAL, goto epilogue);
+        char    *frame = NULL;
+        TRY(exit_code,
+            frame_encode(
+                frame_buffer, bytes_expected_per_frame, default_charset,
+                i == 0 ? NULL : reference_fbuffer, &frame
+            ),
+            goto epilogue);
+        TRY(exit_code, frame_compress(frame, &buffer[i]), goto epilogue);
+        memcpy(reference_fbuffer, frame_buffer, bytes_expected_per_frame);
+        frames_processed += 1;
+        if (feof(pipe)) {
+            break;
+        }
+    }
+    if (frames_processed != VIDEO_FPS) {
+        // The convention is to treat NULL pointers as errors, therefore we
+        // need to allocate a filler frame with no bytes to differentiate between
+        // actual NULL frames vs. empty frames.
+        for (size_t i = 0; i < VIDEO_FPS - frames_processed; ++i) {
+            buffer[i + frames_processed] = malloc(sizeof(""));
+            CHECK(exit_code, buffer[i + frames_processed] == NULL, TL_ALLOC_FAILURE, goto epilogue);
+            *buffer[i + frames_processed] = '\0';
+        }
+    }
+epilogue:
+    if (pipe != NULL) {
+        _pclose(pipe);
+        pipe = NULL;
+    }
+    free(reference_fbuffer);
+    free(frame_buffer);
     return exit_code;
 }
 
@@ -295,7 +399,7 @@ tl_result video_helper_thread_exec(wthread_data *worker_thdata) {
         }
         TRY(exit_code,
             write_vbuffer_compressed(
-                serial, worker_thdata->thdata->pstate,
+                serial, worker_thdata->thdata,
                 clock_start + (worker_thdata->wthread_id == WORKER_V1 ? 0.0 : 1.0), media_path,
                 worker_thdata->thdata->mtdta->streams_mask, target_buffer, default_charset
             ),
@@ -307,9 +411,23 @@ tl_result video_helper_thread_exec(wthread_data *worker_thdata) {
         ReleaseSRWLockExclusive(&worker_thdata->thdata->pstate->srw);
         SetEvent(finished_flag);
     }
-    for (size_t i = 0; i < VIDEO_FPS; ++i) {
-        free(target_buffer[i]);
-        target_buffer[i] = NULL;
-    }
     return exit_code;
+}
+
+tl_result frame_encode(
+    uint8_t *frame_start,
+    size_t   frame_size,
+    bool     default_charset,
+    uint8_t *keyframe,
+    char   **frame
+) {
+    return TL_SUCCESS;
+}
+
+
+tl_result frame_compress(
+    char* frame,
+    char** compressed_out
+) {
+    return TL_SUCCESS;
 }

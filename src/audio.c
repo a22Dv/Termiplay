@@ -34,6 +34,7 @@ void callback(
     const void *pInput,
     ma_uint32   frameCount
 ) {
+    const static double inverse = (double)1.0 / (double)AUDIO_SAMPLE_RATE;
     static size_t       current_serial = 0;
     static size_t       current_idx = 0;
     static const size_t max_buffer_samples = AUDIO_SAMPLE_RATE * CHANNEL_COUNT;
@@ -89,6 +90,6 @@ void callback(
             (int16_t)((double)((int16_t *)pOutput)[i] * volume) * (muted ? 0 : 1);
     }
     AcquireSRWLockExclusive(&thdata->pstate->srw);
-    thdata->pstate->main_clock += (double)frameCount / (double)AUDIO_SAMPLE_RATE;
+    thdata->pstate->main_clock += (double)frameCount * inverse;
     ReleaseSRWLockExclusive(&thdata->pstate->srw);
 }

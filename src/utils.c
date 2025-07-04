@@ -115,7 +115,7 @@ tl_result get_metadata(
 
     pipe = _wpopen(cmd_buffer, L"r");
     CHECK(exit_code, pipe == NULL, TL_PIPE_OPEN_FAILURE, goto epilogue);
-    ret = fscanf(pipe, "%lf", &duration);
+    ret = fscanf_s(pipe, "%lf", &duration);
     int exit_pipe = _pclose(pipe);
     CHECK(exit_code, ret != 1, TL_FORMAT_FAILURE, goto epilogue);
     CHECK(exit_code, exit_pipe != 0, TL_PIPE_PROCESS_FAILURE, goto epilogue);
@@ -149,7 +149,7 @@ tl_result get_metadata(
 
     pipe = _wpopen(cmd_buffer, L"r");
     CHECK(exit_code, pipe == NULL, TL_PIPE_OPEN_FAILURE, goto epilogue);
-    ret = fscanf(pipe, "%hu %hu %u/%u", &width, &height, &num, &denum);
+    ret = fscanf_s(pipe, "%hu %hu %u/%u", &width, &height, &num, &denum);
     exit_pipe = _pclose(pipe);
     CHECK(exit_code, exit_pipe != 0, TL_PIPE_PROCESS_FAILURE, goto epilogue);
     CHECK(exit_code, ret != 4, TL_FORMAT_FAILURE, goto epilogue);

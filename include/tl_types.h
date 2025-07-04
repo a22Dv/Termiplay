@@ -12,9 +12,6 @@
 #define VIDEO_THREAD_ID 2
 #define WORKER_THREAD_COUNT 3
 
-#define CHARSET_1 " `.-':_,^=;><+!rc*/z?sLTv)J7}fI31tlu[neoZ5Yxjya24VpOGbUAKXHm8RD#$Bg0MNWQ&@"
-#define CHARSET_2 "▀"
-
 #define VIDEO_FLAG_OFFSET 4
 #define AUDIO_FLAG_OFFSET 0
 #define VIDEO_PRESENT (1)
@@ -86,4 +83,5 @@ typedef struct wthread_data {
     HANDLE       shutdown_event;
     uint8_t      wthread_id;
 } wthread_data;
+
 #endif

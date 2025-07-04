@@ -1,9 +1,9 @@
 #ifndef TL_PROC
 #define TL_PROC
 
+#include <process.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <process.h>
 #include "Windows.h"
 #include "tl_errors.h"
 #include "tl_types.h"
@@ -13,8 +13,7 @@
 #define WORKER_A2 1
 #define WORKER_V1 2
 #define WORKER_V2 3
-#define COMMAND_BUFFER_SIZE 1024
-
+#define COMMAND_BUFFER_SIZE 512
 
 /// @brief Executes producer thread.
 /// @param thdata Thread data.
@@ -40,7 +39,7 @@ tl_result write_abuffer(
 
 /// @brief Writes to a given audio buffer.
 /// @param serial_at_call Data serial at call.
-/// @param pstate Player state.
+/// @param thdata Caller thread data.
 /// @param clock_start Clock start of decoding.
 /// @param media_path Path to media file.
 /// @param streams Stream bitmask.
@@ -49,7 +48,7 @@ tl_result write_abuffer(
 /// @return Return code.
 tl_result write_vbuffer_compressed(
     const size_t  serial_at_call,
-    player_state *pstate,
+    thread_data  *thdata,
     const double  clock_start,
     const WCHAR  *media_path,
     const uint8_t streams,
@@ -67,4 +66,27 @@ tl_result audio_helper_thread_exec(wthread_data *worker_thdata);
 /// @return Return code.
 tl_result video_helper_thread_exec(wthread_data *worker_thdata);
 
+/// @brief Encodes a frame into an uncompressed char*.
+/// @param frame_start Pointer to start of frame data.
+/// @param frame_size Amount of data in each frame, including channels. [H*W*C].
+/// @param default_charset Whether to use the default character set or no.
+/// @param keyframe  Passing NULL will make the function return a full keyframe. A delta otherwise.
+/// @param frame Where to store the result.
+/// @return Return code.
+tl_result frame_encode(
+    uint8_t *frame_start,
+    size_t   frame_size,
+    bool     default_charset,
+    uint8_t *keyframe,
+    char   **frame
+);
+
+/// @brief Compresses a frame using LZ4.
+/// @param frame Frame to compress.
+/// @param compressed_out NULL-ed location to store compressed frame
+/// @return Return code.
+tl_result frame_compress(
+    char* frame,
+    char** compressed_out
+);
 #endif
