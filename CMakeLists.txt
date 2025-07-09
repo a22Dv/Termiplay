@@ -18,6 +18,7 @@ target_compile_options(termiplay PRIVATE /W4 /WX
     /wd4100   # Disable warning: unreferenced formal parameter
     /wd4101   # Disable warning: unreferenced local variable
     /wd4189   # Disable warning: local variable is initialized but not referenced
+    /wd4702
 )
 target_include_directories(termiplay PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(termiplay PRIVATE lz4::lz4)

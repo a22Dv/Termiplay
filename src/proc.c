@@ -65,25 +65,33 @@ tl_result proc_thread_exec(thread_data *thdata) {
 
     while (true) {
         active_wthread_count = 0;
-        AcquireSRWLockShared(&thdata->pstate->srw);
+        AcquireSRWLockShared(&thdata->pstate->control_srw);
+        AcquireSRWLockShared(&thdata->pstate->buffer_serial_srw);
+        AcquireSRWLockShared(&thdata->pstate->clock_srw);
         const bool   shutdown_status = thdata->pstate->shutdown;
         const bool   current_charset = thdata->pstate->default_charset;
         const bool   current_seek_state = thdata->pstate->seeking;
         const double current_clock = thdata->pstate->main_clock;
         const size_t current_serial = thdata->pstate->current_serial;
-        ReleaseSRWLockShared(&thdata->pstate->srw);
+        const bool   readable_state[MAX_BUFFER_COUNT] = {
+            thdata->pstate->abuffer1_readable, thdata->pstate->abuffer2_readable,
+            thdata->pstate->vbuffer1_readable, thdata->pstate->vbuffer2_readable
+        };
+        ReleaseSRWLockShared(&thdata->pstate->clock_srw);
+        ReleaseSRWLockShared(&thdata->pstate->buffer_serial_srw);
+        ReleaseSRWLockShared(&thdata->pstate->control_srw);
 
         if (shutdown_status) {
             break;
         }
         // Buffer invalidation.
         if (current_serial != serial_acknowledged) {
-            AcquireSRWLockExclusive(&thdata->pstate->srw);
+            AcquireSRWLockExclusive(&thdata->pstate->buffer_serial_srw);
             thdata->pstate->abuffer1_readable = false;
             thdata->pstate->abuffer2_readable = false;
             thdata->pstate->vbuffer1_readable = false;
             thdata->pstate->vbuffer2_readable = false;
-            ReleaseSRWLockExclusive(&thdata->pstate->srw);
+            ReleaseSRWLockExclusive(&thdata->pstate->buffer_serial_srw);
             serial_acknowledged = current_serial;
         }
         if (current_seek_state) {
@@ -92,12 +100,6 @@ tl_result proc_thread_exec(thread_data *thdata) {
             Sleep(POLLING_RATE_MS / 5);
             continue;
         }
-        AcquireSRWLockShared(&thdata->pstate->srw);
-        const bool readable_state[MAX_BUFFER_COUNT] = {
-            thdata->pstate->abuffer1_readable, thdata->pstate->abuffer2_readable,
-            thdata->pstate->vbuffer1_readable, thdata->pstate->vbuffer2_readable
-        };
-        ReleaseSRWLockShared(&thdata->pstate->srw);
         for (size_t i = 0; i < buffer_count; ++i) {
             if (readable_state[i]) {
                 continue;
@@ -267,7 +269,7 @@ tl_result write_vbuffer_compressed(
     }
 
     wchar_t command[COMMAND_BUFFER_SIZE];
-    int ret = swprintf_s(command, COMMAND_BUFFER_SIZE, L"");
+    int     ret = swprintf_s(command, COMMAND_BUFFER_SIZE, L"");
     ret = swprintf_s(
         command, COMMAND_BUFFER_SIZE,
         L"ffmpeg -ss %lf -i \"%ls\" -vframes %i -r %i -f rawvideo -vf scale=%llu:%llu:flags=%ls "
@@ -297,9 +299,9 @@ tl_result write_vbuffer_compressed(
             exit_code, (bytes_read != bytes_expected_per_frame) && (!feof(pipe) || bytes_read != 0),
             TL_PIPE_PROCESS_FAILURE, goto epilogue
         );
-        AcquireSRWLockShared(&thdata->pstate->srw);
+        AcquireSRWLockShared(&thdata->pstate->buffer_serial_srw);
         const size_t state_serial = thdata->pstate->current_serial;
-        ReleaseSRWLockShared(&thdata->pstate->srw);
+        ReleaseSRWLockShared(&thdata->pstate->buffer_serial_srw);
         CHECK(exit_code, state_serial != serial_at_call, TL_OUTDATED_SERIAL, goto epilogue);
         char  *frame = NULL;
         size_t bytes_written = 0;
@@ -342,14 +344,22 @@ tl_result audio_helper_thread_exec(wthread_data *worker_thdata) {
     const WCHAR *media_path = worker_thdata->thdata->mtdta->media_path;
     while (true) {
         WaitForMultipleObjects(2, wake_flags, FALSE, INFINITE);
-        AcquireSRWLockShared(&worker_thdata->thdata->pstate->srw);
-        const size_t serial = worker_thdata->thdata->pstate->current_serial;
+        AcquireSRWLockShared(&worker_thdata->thdata->pstate->control_srw);
         const bool   shutdown = worker_thdata->thdata->pstate->shutdown;
-        const double clock_start = worker_thdata->thdata->pstate->main_clock;
-        ReleaseSRWLockShared(&worker_thdata->thdata->pstate->srw);
+        ReleaseSRWLockShared(&worker_thdata->thdata->pstate->control_srw);
+
         if (shutdown || WaitForSingleObject(shutdown_flag, 0) == WAIT_OBJECT_0) {
             break;
         }
+
+        AcquireSRWLockShared(&worker_thdata->thdata->pstate->buffer_serial_srw);
+        AcquireSRWLockShared(&worker_thdata->thdata->pstate->clock_srw);
+        const size_t serial = worker_thdata->thdata->pstate->current_serial;
+        const double clock_start = worker_thdata->thdata->pstate->main_clock;
+        ReleaseSRWLockShared(&worker_thdata->thdata->pstate->clock_srw);
+        ReleaseSRWLockShared(&worker_thdata->thdata->pstate->buffer_serial_srw);
+    
+        
         memset(target_buffer, 0, sizeof(int16_t) * AUDIO_SAMPLE_RATE * CHANNEL_COUNT);
         TRY(exit_code,
             write_abuffer(
@@ -361,11 +371,11 @@ tl_result audio_helper_thread_exec(wthread_data *worker_thdata) {
         if (exit_code != TL_SUCCESS && exit_code != TL_OUTDATED_SERIAL) {
             break;
         }
-        AcquireSRWLockExclusive(&worker_thdata->thdata->pstate->srw);
+        AcquireSRWLockExclusive(&worker_thdata->thdata->pstate->buffer_serial_srw);
         if (worker_thdata->thdata->pstate->current_serial == serial) {
             *target_readable_flag = true;
         }
-        ReleaseSRWLockExclusive(&worker_thdata->thdata->pstate->srw);
+        ReleaseSRWLockExclusive(&worker_thdata->thdata->pstate->buffer_serial_srw);
         SetEvent(finished_flag);
     }
     return exit_code;
@@ -386,15 +396,22 @@ tl_result video_helper_thread_exec(wthread_data *worker_thdata) {
     const WCHAR *media_path = worker_thdata->thdata->mtdta->media_path;
     while (true) {
         WaitForMultipleObjects(2, wake_flags, FALSE, INFINITE);
-        AcquireSRWLockShared(&worker_thdata->thdata->pstate->srw);
+        AcquireSRWLockShared(&worker_thdata->thdata->pstate->control_srw);
         const bool   shutdown = worker_thdata->thdata->pstate->shutdown;
-        const size_t serial = worker_thdata->thdata->pstate->current_serial;
-        const double clock_start = worker_thdata->thdata->pstate->main_clock;
         const bool   default_charset = worker_thdata->thdata->pstate->default_charset;
-        ReleaseSRWLockShared(&worker_thdata->thdata->pstate->srw);
+        ReleaseSRWLockShared(&worker_thdata->thdata->pstate->control_srw);
+
         if (shutdown || WaitForSingleObject(shutdown_flag, 0) == WAIT_OBJECT_0) {
             break;
         }
+
+        AcquireSRWLockShared(&worker_thdata->thdata->pstate->buffer_serial_srw);
+        AcquireSRWLockShared(&worker_thdata->thdata->pstate->clock_srw);
+        const size_t serial = worker_thdata->thdata->pstate->current_serial;
+        const double clock_start = worker_thdata->thdata->pstate->main_clock;
+        ReleaseSRWLockShared(&worker_thdata->thdata->pstate->clock_srw);
+        ReleaseSRWLockShared(&worker_thdata->thdata->pstate->buffer_serial_srw);
+        
         for (size_t i = 0; i < VIDEO_FPS; ++i) {
             free(target_buffer[i]);
             target_buffer[i] = NULL;
@@ -410,11 +427,11 @@ tl_result video_helper_thread_exec(wthread_data *worker_thdata) {
         if (exit_code != TL_SUCCESS && exit_code != TL_OUTDATED_SERIAL) {
             break;
         }
-        AcquireSRWLockExclusive(&worker_thdata->thdata->pstate->srw);
+        AcquireSRWLockExclusive(&worker_thdata->thdata->pstate->buffer_serial_srw);
         if (worker_thdata->thdata->pstate->current_serial == serial) {
             *target_readable_flag = true;
         }
-        ReleaseSRWLockExclusive(&worker_thdata->thdata->pstate->srw);
+        ReleaseSRWLockExclusive(&worker_thdata->thdata->pstate->buffer_serial_srw);
         SetEvent(finished_flag);
     }
     return exit_code;
@@ -556,8 +573,8 @@ tl_result frame_compress(
     CHECK(exit_code, compressed_out == NULL, TL_NULL_ARGUMENT, return exit_code);
     CHECK(exit_code, *compressed_out != NULL, TL_OVERWRITE, return exit_code);
     CHECK(
-        exit_code, frame_size_bytes == 0 || frame_size_bytes >= LZ4_MAX_INPUT_SIZE, TL_INVALID_ARGUMENT,
-        return exit_code
+        exit_code, frame_size_bytes == 0 || frame_size_bytes >= LZ4_MAX_INPUT_SIZE,
+        TL_INVALID_ARGUMENT, return exit_code
     );
 
     int compress_bound = LZ4_compressBound((int)frame_size_bytes);

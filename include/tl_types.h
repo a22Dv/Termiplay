@@ -1,8 +1,8 @@
 #ifndef TL_TYPES
 #define TL_TYPES
 #include <Windows.h>
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #define AUDIO_SAMPLE_RATE 48000
 #define VIDEO_FPS 30
@@ -34,6 +34,10 @@
 #define MAX_BUFFER_COUNT 4
 #define MAX_INDIV_FRAMEBUF_UNCOMP_SIZE 10'000'000
 
+typedef volatile LONG32 atomic_bool;
+typedef volatile LONG64 atomic_double;
+typedef volatile LONG64 atomic_size_t;
+
 /// @brief Basic video metadata.
 typedef struct metadata {
     uint16_t width;
@@ -44,26 +48,25 @@ typedef struct metadata {
     WCHAR   *media_path;
 } metadata;
 
-/// BUG: REMOVE UNDERFLOW FLAGS.
-
 /// @brief Active player state.
 typedef struct player_state {
-    bool    shutdown;
-    bool    playback;
-    bool    looping;
-    bool    seeking;
-    bool    muted;
-    bool    default_charset;
-    bool    vbuffer1_readable;
-    bool    abuffer1_readable;
-    bool    abuffer2_readable;
-    bool    vbuffer2_readable;
-    double  volume;
-    double  main_clock;
-    double  seek_variable;
-    size_t  seek_idx;
-    size_t  current_serial;
-    SRWLOCK srw;
+    atomic_double main_clock;
+    atomic_bool   vbuffer1_readable;
+    atomic_bool   abuffer1_readable;
+    atomic_bool   abuffer2_readable;
+    atomic_bool   vbuffer2_readable;
+    atomic_bool   shutdown;
+    atomic_bool   playback;
+    atomic_bool   looping;
+    atomic_bool   seeking;
+    atomic_bool   muted;
+    atomic_bool   default_charset;
+    atomic_double seek_variable;
+    atomic_double volume;
+    atomic_size_t current_serial;
+    atomic_size_t seek_idx;
+    atomic_size_t audio_read_idx;
+    atomic_size_t video_read_idx;
 } player_state;
 
 /// @brief Thread data.
@@ -84,7 +87,7 @@ typedef struct wthread_data {
     HANDLE       finish_event;
     HANDLE       shutdown_event;
     uint8_t      wthread_id;
-    char     *uncomp_fbuffer;
+    char        *uncomp_fbuffer;
 } wthread_data;
 
 #endif

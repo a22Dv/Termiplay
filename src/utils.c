@@ -229,9 +229,21 @@ tl_result create_player_state(player_state **pl_state_ptr) {
 
     // Player state looping condition MUST be true and start at a value above duration (DBL_MAX)
     // to trigger the looping logic to seek to 0.0, thus handling initialization as a side-effect.
+    pstate->main_clock = DBL_MAX;
+    InitializeSRWLock(&pstate->clock_srw);
+
+    
+    pstate->abuffer1_readable = false;
+    pstate->abuffer2_readable = false;
+    pstate->vbuffer1_readable = false;
+    pstate->vbuffer2_readable = false;
+    pstate->current_serial = 0;
+    InitializeSRWLock(&pstate->buffer_serial_srw);
+    
+    pstate->default_charset = false;
+
     pstate->shutdown = false;
     pstate->looping = true;
-    pstate->main_clock = DBL_MAX;
     pstate->default_charset = true;
     pstate->muted = false;
     pstate->playback = true;
@@ -239,16 +251,35 @@ tl_result create_player_state(player_state **pl_state_ptr) {
     pstate->seek_idx = 0;
     pstate->seeking = false;
     pstate->volume = 0.5;
-    pstate->abuffer1_readable = false;
-    pstate->vbuffer1_readable = false;
-    pstate->abuffer2_readable = false;
-    pstate->vbuffer2_readable = false;
-    pstate->current_serial = 0;
-    InitializeSRWLock(&pstate->srw);
-
+    InitializeSRWLock(&pstate->control_srw);
+    
     *pl_state_ptr = pstate;
     return exit_code;
 }
+
+/// @brief Active player state.
+// typedef struct player_state {
+//     double  main_clock;
+//     SRWLOCK clock_srw;
+
+//     bool    default_charset;
+//     bool    vbuffer1_readable;
+//     bool    abuffer1_readable;
+//     bool    abuffer2_readable;
+//     bool    vbuffer2_readable;
+//     size_t  current_serial;
+//     SRWLOCK buffer_serial_srw;
+
+//     bool    shutdown;
+//     bool    playback;
+//     bool    looping;
+//     bool    seeking;
+//     bool    muted;
+//     double  seek_variable;
+//     double  volume;
+//     size_t  seek_idx;
+//     SRWLOCK control_srw;
+// } player_state;
 
 tl_result create_wthread_data(
     thread_data   *thdta,

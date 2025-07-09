@@ -77,12 +77,14 @@ tl_result app_exec(WCHAR *media_path) {
 
     // Main loop.
     while (true) {
-        AcquireSRWLockShared(&plstate->srw);
-        bool   shutdown_status = plstate->shutdown;
-        bool   cur_playback_state = plstate->playback;
-        bool   cur_looping_state = plstate->looping;
+        AcquireSRWLockShared(&plstate->control_srw);
+        AcquireSRWLockShared(&plstate->clock_srw);
+        bool shutdown_status = plstate->shutdown;
+        bool cur_playback_state = plstate->playback;
+        bool cur_looping_state = plstate->looping;
         double cur_clock = plstate->main_clock;
-        ReleaseSRWLockShared(&plstate->srw);
+        ReleaseSRWLockShared(&plstate->clock_srw);
+        ReleaseSRWLockShared(&plstate->control_srw);
         if (shutdown_status) {
             break;
         }
@@ -107,51 +109,45 @@ tl_result app_exec(WCHAR *media_path) {
         uint8_t key_code = 0;
         TRY(exit_code, poll_input(&key_code), goto epilogue);
         TRY(exit_code, proc_input(key_code, seek_multiples, media_mtdata, plstate), goto epilogue);
-
-        // Looping.
-        if (cur_looping_state && cur_clock >= media_mtdata->duration) {
-            AcquireSRWLockExclusive(&plstate->srw);
-            plstate->seeking = true;
-            plstate->main_clock = 0.0;
-            ReleaseSRWLockExclusive(&plstate->srw);
-        }
-
-        // Console buffer resize invalidation.
         CHECK(
             exit_code, !GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &curr_csbi),
             TL_CONSOLE_ERROR, goto epilogue
         );
+
+        AcquireSRWLockExclusive(&plstate->control_srw);
+        // Looping.
+        if (cur_looping_state && cur_clock >= media_mtdata->duration) {
+            plstate->seeking = true;
+            AcquireSRWLockExclusive(&plstate->clock_srw);
+            plstate->main_clock = 0.0;
+            ReleaseSRWLockExclusive(&plstate->clock_srw);
+        }
+        // Console buffer resize invalidation.
         if (prev_csbi.srWindow.Top != curr_csbi.srWindow.Top ||
             prev_csbi.srWindow.Left != curr_csbi.srWindow.Left ||
             prev_csbi.srWindow.Bottom != curr_csbi.srWindow.Bottom ||
             prev_csbi.srWindow.Right != curr_csbi.srWindow.Right) {
-            AcquireSRWLockExclusive(&plstate->srw);
             plstate->seeking = true;
-            ReleaseSRWLockExclusive(&plstate->srw);
             prev_csbi = curr_csbi;
         }
-
-        AcquireSRWLockShared(&plstate->srw);
-        bool cur_seeking_state = plstate->seeking;
-        ReleaseSRWLockShared(&plstate->srw);
-
         // Invalidation. Increase serial.
-        if (cur_seeking_state && !prev_seeking) {
-            AcquireSRWLockExclusive(&plstate->srw);
+        if (plstate->seeking && !prev_seeking) {
+            AcquireSRWLockExclusive(&plstate->buffer_serial_srw);
             plstate->current_serial += 1;
-            ReleaseSRWLockExclusive(&plstate->srw);
+            ReleaseSRWLockExclusive(&plstate->buffer_serial_srw);
         }
+        prev_seeking = plstate->seeking;
+        ReleaseSRWLockExclusive(&plstate->control_srw);
 #ifdef DEBUG
         state_print(plstate);
 #endif
-        prev_seeking = cur_seeking_state;
         Sleep(POLLING_RATE_MS);
     }
 epilogue:
     if (active_threads != 0) {
-        AcquireSRWLockExclusive(&plstate->srw);
+        AcquireSRWLockExclusive(&plstate->control_srw);
         plstate->shutdown = true;
-        ReleaseSRWLockExclusive(&plstate->srw);
+        ReleaseSRWLockExclusive(&plstate->control_srw);
         WaitForMultipleObjects(active_threads, thread_handles, true, INFINITE);
         for (size_t i = 0; i < active_threads; ++i) {
             if (thread_handles[i] != NULL) {
@@ -220,7 +216,7 @@ tl_result proc_input(
     const metadata *mtdta,
     player_state   *plstate
 ) {
-    AcquireSRWLockExclusive(&plstate->srw);
+    AcquireSRWLockExclusive(&plstate->control_srw);
     switch (key_code) {
     case LOOP: {
         plstate->looping = !plstate->looping;
@@ -252,21 +248,25 @@ tl_result proc_input(
         break;
     }
     case ARROW_LEFT: {
+        AcquireSRWLockExclusive(&plstate->clock_srw);
         plstate->seeking = true;
         plstate->seek_variable += (double)POLLING_RATE_MS / 1000;
         size_t new_idx = (size_t)floor(plstate->seek_variable);
         plstate->seek_idx = new_idx < SEEK_SPEEDS - 1 ? new_idx : SEEK_SPEEDS - 1;
         double new_clock = plstate->main_clock - seek_multiples[plstate->seek_idx];
         plstate->main_clock = new_clock > 0.0 ? new_clock : 0.0;
+        ReleaseSRWLockExclusive(&plstate->clock_srw);
         break;
     }
     case ARROW_RIGHT: {
+        AcquireSRWLockExclusive(&plstate->clock_srw);
         plstate->seeking = true;
         plstate->seek_variable += (double)POLLING_RATE_MS / 1000;
         size_t new_idx = (size_t)floor(plstate->seek_variable);
         plstate->seek_idx = new_idx < SEEK_SPEEDS - 1 ? new_idx : SEEK_SPEEDS - 1;
         double new_clock = plstate->main_clock + seek_multiples[plstate->seek_idx];
         plstate->main_clock = new_clock < mtdta->duration ? new_clock : mtdta->duration;
+        ReleaseSRWLockExclusive(&plstate->clock_srw);
         break;
     }
     default: {
@@ -276,10 +276,9 @@ tl_result proc_input(
         break;
     }
     }
-    ReleaseSRWLockExclusive(&plstate->srw);
+    ReleaseSRWLockExclusive(&plstate->control_srw);
     return TL_SUCCESS;
 }
-
 
 unsigned int __stdcall thread_dispatcher(void *data) {
     tl_result (*dispatch[WORKER_THREAD_COUNT])(thread_data *) = {
