@@ -1,93 +1,71 @@
-#ifndef TL_TYPES
-#define TL_TYPES
+#pragma once
+
 #include <Windows.h>
-#include <stdbool.h>
 #include <stdint.h>
+#include "tl_errors.h"
 
-#define AUDIO_SAMPLE_RATE 48000
-#define VIDEO_FPS 30
-#define CHANNEL_COUNT 2
-
-#define AUDIO_THREAD_ID 0
-#define PROC_THREAD_ID 1
-#define VIDEO_THREAD_ID 2
-#define WORKER_THREAD_COUNT 3
-
-#define VIDEO_FLAG_OFFSET 4
-#define AUDIO_FLAG_OFFSET 0
-#define VIDEO_PRESENT (1)
-#define AUDIO_PRESENT (1 << 4)
-
-#define LOOP 'l'
-#define MUTE 'm'
-#define TOGGLE_CHARSET 'c'
-#define TOGGLE_PLAYBACK ' '
-#define QUIT 'q'
-#define EXTENDED 0xE0
-#define ARROW_UP 72
-#define ARROW_DOWN 80
-#define ARROW_LEFT 75
-#define ARROW_RIGHT 77
-
-#define POLLING_RATE_MS 50
-#define SEEK_SPEEDS 8
-#define MAX_BUFFER_COUNT 4
-#define MAX_INDIV_FRAMEBUF_UNCOMP_SIZE 10'000'000
+#define V_FPS 30
+#define A_SAMP_RATE 48000
+#define A_CHANNELS 2
+#define V_FRAME_INTERVALS 0.0334
+#define GBUFFER_BSIZE 512        // Generic buffer size.
+#define GLBUFFER_BSIZE 1024      // Generic long buffer size.
+#define GWVBUFFER_BSIZE 10000000 // Generic work video buffer size. 10MB.
+#define VBUFFER_BSIZE 2 * V_FPS * sizeof(char *)
+#define ABUFFER_BSIZE 2 * A_SAMP_RATE *A_CHANNELS * sizeof(int16_t)
 
 typedef volatile LONG32 atomic_bool;
-typedef volatile LONG64 atomic_double;
 typedef volatile LONG64 atomic_size_t;
+typedef volatile LONG64 atomic_double;
 
-/// @brief Basic video metadata.
-typedef struct metadata {
-    uint16_t width;
-    uint16_t height;
-    uint8_t  streams_mask;
-    uint8_t  fps;
-    double   duration;
-    WCHAR   *media_path;
-} metadata;
+/// @brief Handle index. 
+typedef enum handle_idx {
+    AUDIO_THREAD_HNDLE,
+    VIDEO_THREAD_HNDLE,
+    AUDIO_PROD_THREAD_HNDLE,
+    VIDEO_PROD_THREAD_HNDLE,
+    AUDIO_PROD_WAKE_HNDLE,
+    VIDEO_PROD_WAKE_HNDLE,
+} handle_idx;
 
-/// @brief Active player state.
-typedef struct player_state {
-    atomic_double main_clock;
-    atomic_bool   vbuffer1_readable;
-    atomic_bool   abuffer1_readable;
-    atomic_bool   abuffer2_readable;
-    atomic_bool   vbuffer2_readable;
-    atomic_bool   shutdown;
-    atomic_bool   playback;
-    atomic_bool   looping;
-    atomic_bool   seeking;
-    atomic_bool   muted;
-    atomic_bool   default_charset;
-    atomic_double seek_variable;
-    atomic_double volume;
-    atomic_size_t current_serial;
-    atomic_size_t seek_idx;
-    atomic_size_t audio_read_idx;
-    atomic_size_t video_read_idx;
-} player_state;
+/// @brief Player.
+typedef struct player {
+    char **const   video_rbuffer;
+    int16_t *const audio_rbuffer;
+    char *const    gvwbuffer; // Generic work buffer allocation specifically for video processing.
+    atomic_bool    shutdown;
+    atomic_bool    playing;
+    atomic_bool    looping;
+    atomic_bool    invalidated; // Any disruptive operation. (Seeking, console resizing)
+    atomic_double  main_clock;
+    atomic_double  volume;
+    atomic_double  seek_speed;
+    atomic_size_t  serial; // Data versioning.
+    atomic_size_t  vread_idx;
+    atomic_size_t  aread_idx;
+    const HANDLE const *hndles; // Use with `handle_idx`.
+} player;
 
-/// @brief Thread data.
+/// @brief Media metadata.
+typedef struct media_mtdta {
+    const WCHAR *const media_path;
+    const double       duration;
+    const size_t       height;
+    const size_t       width;
+} media_mtdta;
+
+/// @brief Thread IDs
+typedef enum thread_id {
+    MAIN_THREAD_ID,
+    AUDIO_THREAD_ID,
+    VIDEO_THREAD_ID,
+    AUDIO_PROD_THREAD_ID,
+    VIDEO_PROD_THREAD_ID
+} thread_id;
+
+/// @brief Thread data to be passed at creation.
 typedef struct thread_data {
-    char        **video_buffer1;
-    char        **video_buffer2;
-    int16_t      *audio_buffer1;
-    int16_t      *audio_buffer2;
-    player_state *pstate;
-    metadata     *mtdta;
-    uint8_t       thread_id;
+    player *const            player;
+    const media_mtdta *const media_mtdta;
+    const thread_id          thread_id;
 } thread_data;
-
-/// @brief Worker thread data.
-typedef struct wthread_data {
-    thread_data *thdata;
-    HANDLE       order_event;
-    HANDLE       finish_event;
-    HANDLE       shutdown_event;
-    uint8_t      wthread_id;
-    char        *uncomp_fbuffer;
-} wthread_data;
-
-#endif
