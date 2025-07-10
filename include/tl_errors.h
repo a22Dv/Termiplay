@@ -5,7 +5,16 @@
 #define ERR_LIST                                                                                   \
     X(TL_SUCCESS, "SUCCESS")                                                                       \
     X(TL_GEN_ERR, "GENERIC ERROR")                                                                 \
-    X(TL_DEP_NOT_FOUND, "DEPENDENCY NOT FOUND")
+    X(TL_DEP_NOT_FOUND, "DEPENDENCY NOT FOUND")                                                    \
+    X(TL_NULL_ARG, "INVALID NULL ARGUMENT")                                                        \
+    X(TL_ALREADY_INITIALIZED, "ALREADY INITIALIZED. NON-NULL POINTER RECEIVED.")                   \
+    X(TL_ALLOC_FAILURE, "MEMORY ALLOCATION FAILURE.")                                              \
+    X(TL_PIPE_CREATION_FAILURE, "PIPE CREATION FAILURE")                                           \
+    X(TL_PIPE_PROC_FAILURE, "PIPE PROCESS FAILURE")                                                \
+    X(TL_FORMAT_FAILURE, "FORMAT FAILURE")                                                         \
+    X(TL_PIPE_READ_FAILURE, "PIPE READ FAILURE")                                                   \
+    X(TL_INVALID_ARG, "INVALID ARGUMENT")                                                          \
+    X(TL_OS_ERR, "OS ERROR")
 
 /// @brief Custom return code/value.
 typedef enum _tl_result {

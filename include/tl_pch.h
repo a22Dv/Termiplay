@@ -10,4 +10,5 @@
 #include <stdio.h>
 #include <process.h>
 #include <math.h>
+#include <float.h>
 #include "lz4.h"
