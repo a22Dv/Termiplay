@@ -16,7 +16,8 @@
     X(TL_INVALID_ARG, "INVALID ARGUMENT")                                                          \
     X(TL_OS_ERR, "OS ERROR")                                                                       \
     X(TL_CONSOLE_ERR, "CONSOLE ERROR")                                                             \
-    X(TL_INVALID_FILE, "INVALID FILE")
+    X(TL_INVALID_FILE, "INVALID FILE")                                                             \
+    X(TL_INCOMPLETE_DATA, "INCOMPLETE DATA")
 
 /// @brief Custom return code/value.
 typedef enum _tl_result {

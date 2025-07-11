@@ -17,4 +17,6 @@ void get_input(key_code *kc);
 /// @brief Alters player state based on key code given.
 /// @param pl Player.
 /// @param kc Key code.
-void process_input(player* pl, const key_code kc);
+/// @return Return code.
+
+tl_result process_input(player* pl, const key_code kc);

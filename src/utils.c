@@ -380,9 +380,9 @@ void state_print(player *pl) {
     const double main_clock = get_atomic_double(&pl->main_clock);
     ReleaseSRWLockShared(&pl->srw_mclock);
     COORD c = {.X = 0, .Y = 0};
-    SetConsoleCursorPosition(GetStdHandle(STD_ERROR_HANDLE), c);
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), c);
     fprintf(
-        stderr,
+        stdout,
         "SHUTDOWN: %s\n"
         "PLAYING: %s\n"
         "LOOPING: %s\n"
@@ -396,9 +396,7 @@ void state_print(player *pl) {
         "AWRITE_IDX: %zu\n"
         "VREAD_IDX: %zu\n"
         "VWRITE_IDX: %zu\n"
-        "ACTIVE_THREADS: %u\n"
-        "---------------------",
-        
+        "ACTIVE_THREADS: %u\n",        
         get_atomic_bool(&pl->shutdown) ? " TRUE" : "FALSE",
         get_atomic_bool(&pl->playing) ? " TRUE" : "FALSE",
         get_atomic_bool(&pl->looping) ? " TRUE" : "FALSE",

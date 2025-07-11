@@ -19,13 +19,15 @@ tl_result player_exec(
     TRY(excv, create_player(wargv[1], &pl), goto epilogue);
     set_atomic_bool(&pl->playing, true);
     set_atomic_bool(&pl->looping, true);
+    set_atomic_double(&pl->volume, 0.5);
+
     while (true) {
         if (get_atomic_bool(&pl->shutdown)) {
             break;
         }
         key_code key = NO_INPUT;
         get_input(&key);
-        process_input(pl, key);
+        TRY(excv, process_input(pl, key), goto epilogue);
         state_print(pl);
         Sleep(POLLING_RATE_MS);
     }
@@ -89,18 +91,43 @@ epilogue:
     }
 }
 
-void process_input(
+tl_result process_input(
     player        *pl,
     const key_code kc
 ) {
-    static double       seek_length_s = 0.0;
-    static const double ticks_ps = (double)1 / ((double)POLLING_RATE_MS / 1000.0);
-    static double       spdl_unbounded = 0.0;
-    static double       spdr_unbounded = 0.0;
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, pl == NULL, TL_NULL_ARG, return excv);
 
-    if (pl == NULL) {
-        return;
+    static double                     seek_length_s = 0.0;
+    static const double               ticks_ps = (double)1 / ((double)POLLING_RATE_MS / 1000.0);
+    static double                     spdl_unbounded = 0.0;
+    static double                     spdr_unbounded = 0.0;
+    static bool                       startup = true;
+    static CONSOLE_SCREEN_BUFFER_INFO set_csbi;
+
+    if (startup) {
+        const HANDLE stdouth = GetStdHandle(STD_OUTPUT_HANDLE);
+        CHECK(excv, stdouth == NULL || stdouth == INVALID_HANDLE_VALUE, TL_OS_ERR, return excv);
+        CHECK(excv, !GetConsoleScreenBufferInfo(stdouth, &set_csbi), TL_CONSOLE_ERR, return excv);
+        startup = false;
     }
+
+    CONSOLE_SCREEN_BUFFER_INFO new_csbi;
+    const HANDLE               stdouth = GetStdHandle(STD_OUTPUT_HANDLE);
+    CHECK(excv, stdouth == NULL || stdouth == INVALID_HANDLE_VALUE, TL_OS_ERR, return excv);
+    CHECK(excv, !GetConsoleScreenBufferInfo(stdouth, &new_csbi), TL_CONSOLE_ERR, return excv);
+
+    if (new_csbi.srWindow.Bottom != set_csbi.srWindow.Bottom ||
+        new_csbi.srWindow.Top != set_csbi.srWindow.Top ||
+        new_csbi.srWindow.Left != set_csbi.srWindow.Left ||
+        new_csbi.srWindow.Right != set_csbi.srWindow.Right) {
+        set_atomic_bool(&pl->invalidated, true);
+        add_atomic_size_t(&pl->serial, 1);
+        set_csbi = new_csbi;
+        return TL_SUCCESS;
+
+    }
+
     AcquireSRWLockExclusive(&pl->srw_mclock);
     if (get_atomic_double(&pl->main_clock) > pl->media_mtdta->duration) {
         if (get_atomic_bool(&pl->looping)) {
@@ -109,13 +136,12 @@ void process_input(
         } else {
             set_atomic_bool(&pl->shutdown, true);
         }
+        add_atomic_size_t(&pl->serial, 1);
     }
     ReleaseSRWLockExclusive(&pl->srw_mclock);
-    
     if (get_atomic_bool(&pl->shutdown)) {
-        return;
+        return excv;
     }
-
     switch (kc) {
     case Q:
         set_atomic_bool(&pl->shutdown, true);
@@ -143,10 +169,13 @@ void process_input(
         spdl_unbounded = 1.8 * pow(2, seek_length_s);
         AcquireSRWLockExclusive(&pl->srw_mclock);
         set_atomic_bool(&pl->invalidated, true);
+        const double ssl = get_atomic_double(&pl->seek_speed);
+        if (ssl == 0.0) {
+            add_atomic_size_t(&pl->serial, 1);
+        }
         set_atomic_double(&pl->seek_speed, spdl_unbounded > 480.0 ? 480.0 : spdl_unbounded);
-        const double ss = get_atomic_double(&pl->seek_speed);
-        if (get_atomic_double(&pl->main_clock) - ss > 0.0) {
-            add_atomic_double(&pl->main_clock, -ss);
+        if (get_atomic_double(&pl->main_clock) - ssl > 0.0) {
+            add_atomic_double(&pl->main_clock, -ssl);
         } else {
             set_atomic_double(&pl->main_clock, 0.0);
         }
@@ -157,8 +186,12 @@ void process_input(
         spdr_unbounded = 1.8 * pow(2, seek_length_s);
         AcquireSRWLockExclusive(&pl->srw_mclock);
         set_atomic_bool(&pl->invalidated, true);
+        const double ssr = get_atomic_double(&pl->seek_speed);
+        if (ssr == 0.0) {
+            add_atomic_size_t(&pl->serial, 1);
+        }
         set_atomic_double(&pl->seek_speed, spdr_unbounded > 480.0 ? 480.0 : spdr_unbounded);
-        add_atomic_double(&pl->main_clock, get_atomic_double(&pl->seek_speed));
+        add_atomic_double(&pl->main_clock, ssr);
         ReleaseSRWLockExclusive(&pl->srw_mclock);
         seek_length_s += POLLING_RATE_S;
         break;
@@ -168,4 +201,5 @@ void process_input(
         seek_length_s = 0.0;
         break;
     }
+    return excv;
 }
