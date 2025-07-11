@@ -14,7 +14,9 @@
     X(TL_FORMAT_FAILURE, "FORMAT FAILURE")                                                         \
     X(TL_PIPE_READ_FAILURE, "PIPE READ FAILURE")                                                   \
     X(TL_INVALID_ARG, "INVALID ARGUMENT")                                                          \
-    X(TL_OS_ERR, "OS ERROR")
+    X(TL_OS_ERR, "OS ERROR")                                                                       \
+    X(TL_CONSOLE_ERR, "CONSOLE ERROR")                                                             \
+    X(TL_INVALID_FILE, "INVALID FILE")
 
 /// @brief Custom return code/value.
 typedef enum _tl_result {
@@ -40,7 +42,7 @@ static const char *err_str(const tl_result err_code) {
 #ifdef TL_DEBUG
 /// Logs errors to stderr.
 #define LOG_ERR(err)                                                                               \
-    fprintf(stderr, "[DBG-LOG] %s:%s():%i | %s", __FILE__, __func__, __LINE__, err_str(err))
+    fprintf(stderr, "[DBG-LOG] %s:%s():%i | %s\n", __FILE__, __func__, __LINE__, err_str(err))
 #else
 /// NO-OP. TL_DEBUG is not defined.
 #define LOG_ERR(err) ((void)0)

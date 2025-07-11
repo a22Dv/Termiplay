@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdbool.h>
+#include "tl_errors.h"
 #include "tl_types.h"
 
 #define CHECK(excv, fail_expr, err, action)                                                        \
@@ -40,6 +40,10 @@ void set_atomic_bool(
 /// @return Value of variable.
 bool get_atomic_bool(atomic_bool_t *b);
 
+/// @brief Flips an atomic bool. Internally uses a XOR flip.
+/// @param b Target atomic variable
+void flip_atomic_bool(atomic_bool_t *b);
+
 /// @brief Sets an atomic double to a given value.
 /// @param dbl Target atomic variable.
 /// @param value Value to set to.
@@ -72,7 +76,7 @@ void set_atomic_size_t(
 /// @brief Gets the value held by an atomic size_t.
 /// @param st Target atomic variable.
 /// @return Value of variable.
-size_t get_atomic_size_t(atomic_size_t st);
+size_t get_atomic_size_t(atomic_size_t* st);
 
 /// @brief Adds a value to a target atomic size_t.
 /// @param st Target atomic variable.
@@ -140,3 +144,7 @@ void destroy_player(player **pl_ptr);
 /// @brief Corresponding destroy function to free struct.
 /// @param frame_ptr Address of pointer to frame struct.
 void destroy_frame(frame **frame_ptr);
+
+/// @brief Prints player state to console.
+/// @param pl Player struct.
+void state_print(player* pl);
