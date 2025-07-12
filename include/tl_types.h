@@ -34,7 +34,7 @@ typedef int16_t         s16_le;
 #define GLBUFFER_BSIZE 1000    // Generic long buffer size.
 #define GWVBUFFER_BSIZE 550000 // Generic work video buffer size. 550KB
 #define VBUFFER_BSIZE V_FPS * sizeof(frame *)
-#define ABUFFER_BSIZE A_SAMP_RATE * A_CHANNELS * sizeof(s16_le)
+#define ABUFFER_BSIZE A_SAMP_RATE / 5 * A_CHANNELS * sizeof(s16_le)
 #define ASTREAM_BSIZE ABUFFER_BSIZE
 
 
