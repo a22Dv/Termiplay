@@ -127,6 +127,12 @@ tl_result create_player(
     player     **out
 );
 
+/// @brief Copies a raw frame to a specified destination.
+/// @param src Source raw frame.
+/// @param dst_out Destination of the copy.
+/// @return Return code.
+tl_result copy_rawframe(raw_frame* src, raw_frame** dst_out);
+
 /// @brief Corresponding destroy function to free struct.
 /// @param mtdta_ptr Address of pointer to metadata.
 void destroy_media_mtdta(media_mtdta **mtdta_ptr);
@@ -143,7 +149,11 @@ void destroy_player(player **pl_ptr);
 
 /// @brief Corresponding destroy function to free struct.
 /// @param frame_ptr Address of pointer to frame struct.
-void destroy_frame(frame **frame_ptr);
+void destroy_conframe(con_frame **frame_ptr);
+
+/// @brief Corresponding destroy function to free struct.
+/// @param frame_ptr Address of pointer to frame struct.
+void destroy_rawframe(raw_frame **frame_ptr);
 
 /// @brief Prints player state to console.
 /// @param pl Player struct.

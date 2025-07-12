@@ -4,12 +4,19 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-typedef struct frame {
+typedef struct con_frame {
     char  *compressed_data;
     size_t compressed_bsize;
     size_t uncompressed_bsize;
-    size_t serial;
-} frame;
+    size_t flength;
+    size_t fwidth;
+} con_frame;
+
+typedef struct raw_frame {
+    uint8_t* data;
+    size_t flength;
+    size_t fwidth;
+} raw_frame;
 
 typedef volatile LONG32 atomic_bool_t;
 typedef volatile LONG64 atomic_size_t;
@@ -33,9 +40,15 @@ typedef int16_t         s16_le;
 #define GBUFFER_BSIZE 500      // Generic buffer size.
 #define GLBUFFER_BSIZE 1000    // Generic long buffer size.
 #define GWVBUFFER_BSIZE 550000 // Generic work video buffer size. 550KB
-#define VBUFFER_BSIZE V_FPS * sizeof(frame *)
+#define VBUFFER_BSIZE V_FPS * sizeof(con_frame *)
 #define ABUFFER_BSIZE A_SAMP_RATE / 5 * A_CHANNELS * sizeof(s16_le)
 #define ASTREAM_BSIZE ABUFFER_BSIZE
+
+#define MAXIMUM_RESOLUTION_WIDTH 1920
+#define MAXIMUM_RESOLUTION_HEIGHT 1080
+#define MAXIMUM_BUFFER_SIZE 2073600 // 1920 * 1080.
+#define COLOR_CHANNEL_COUNT 1
+
 
 
 /// @brief Handle index.
@@ -93,7 +106,7 @@ typedef struct thread_data {
 
 /// @brief Player.
 typedef struct player {
-    frame         **video_rbuffer;
+    con_frame         **video_rbuffer;
     s16_le         *audio_rbuffer;
     char           *gwpvbuffer; // Work buffer. VProducer.
     char           *gwcvbuffer; // Work buffer. VConsumer.

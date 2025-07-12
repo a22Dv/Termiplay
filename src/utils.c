@@ -259,9 +259,10 @@ tl_result create_player(
     pl->audio_rbuffer = audio_rbuffer;
 
     if (pl->media_mtdta->video_present) {
-        frame **video_rbuffer = calloc(VBUFFER_BSIZE / sizeof(frame *), sizeof(frame *));
-        char   *gwpvbuffer = malloc(GWVBUFFER_BSIZE);
-        char   *gwcvbuffer = malloc(GWVBUFFER_BSIZE);
+        con_frame **video_rbuffer =
+            calloc(VBUFFER_BSIZE / sizeof(con_frame *), sizeof(con_frame *));
+        char *gwpvbuffer = malloc(GWVBUFFER_BSIZE);
+        char *gwcvbuffer = malloc(GWVBUFFER_BSIZE);
         CHECK(excv, video_rbuffer == NULL, TL_ALLOC_FAILURE, goto epilogue);
         CHECK(excv, gwpvbuffer == NULL, TL_ALLOC_FAILURE, goto epilogue);
         CHECK(excv, gwcvbuffer == NULL, TL_ALLOC_FAILURE, goto epilogue);
@@ -303,6 +304,26 @@ epilogue:
     if (excv != TL_SUCCESS) {
         destroy_player(&pl);
     }
+    return excv;
+}
+
+tl_result copy_rawframe(
+    raw_frame  *src,
+    raw_frame **dst_out
+) {
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, src == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, dst_out == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, *dst_out != NULL, TL_ALREADY_INITIALIZED, return excv);
+
+    *dst_out = malloc(sizeof(raw_frame));
+    CHECK(excv, dst_out == NULL, TL_ALLOC_FAILURE, return excv);
+    (*dst_out)->data = malloc(sizeof(uint8_t) * src->flength * src->fwidth);
+    CHECK(excv, (*dst_out)->data == NULL, TL_ALLOC_FAILURE, return excv);
+
+    memcpy((*dst_out)->data, src->data, sizeof(uint8_t) * src->flength * src->fwidth);
+    (*dst_out)->flength = src->flength;
+    (*dst_out)->fwidth = src->fwidth;
     return excv;
 }
 
@@ -359,6 +380,9 @@ void destroy_player(player **pl_ptr) {
     }
     free((*pl_ptr)->gwcvbuffer);
     free((*pl_ptr)->gwpvbuffer);
+    for (size_t i = 0; i < VBUFFER_BSIZE / sizeof(con_frame *); ++i) {
+        destroy_conframe(&(*pl_ptr)->video_rbuffer[i]);
+    }
     free((*pl_ptr)->video_rbuffer);
     free((*pl_ptr)->audio_rbuffer);
     destroy_media_mtdta(&(*pl_ptr)->media_mtdta);
@@ -366,11 +390,20 @@ void destroy_player(player **pl_ptr) {
     *pl_ptr = NULL;
 }
 
-void destroy_frame(frame **frame_ptr) {
+void destroy_conframe(con_frame **frame_ptr) {
     if (frame_ptr == NULL || *frame_ptr == NULL) {
         return;
     }
     free((*frame_ptr)->compressed_data);
+    free(*frame_ptr);
+    *frame_ptr = NULL;
+}
+
+void destroy_rawframe(raw_frame **frame_ptr) {
+    if (frame_ptr == NULL || *frame_ptr == NULL) {
+        return;
+    }
+    free((*frame_ptr)->data);
     free(*frame_ptr);
     *frame_ptr = NULL;
 }
@@ -396,7 +429,7 @@ void state_print(player *pl) {
         "AWRITE_IDX: %zu\n"
         "VREAD_IDX: %zu\n"
         "VWRITE_IDX: %zu\n"
-        "ACTIVE_THREADS: %u\n",        
+        "ACTIVE_THREADS: %u\n",
         get_atomic_bool(&pl->shutdown) ? " TRUE" : "FALSE",
         get_atomic_bool(&pl->playing) ? " TRUE" : "FALSE",
         get_atomic_bool(&pl->looping) ? " TRUE" : "FALSE",

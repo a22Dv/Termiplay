@@ -22,7 +22,7 @@ tl_result apthread_exec(thread_data *data) {
     CHECK(excv, data == NULL, TL_NULL_ARG, return excv);
     player             *pl = data->player;
     size_t              set_serial = 0;
-    static double       prod_aclock = 0.0;
+    double              prod_aclock = 0.0;
     s16_le              staging_buffer[GLBUFFER_BSIZE];
     static const size_t staging_scount = sizeof(staging_buffer) / sizeof(s16_le);
     static const size_t abuffer_scount = ABUFFER_BSIZE / sizeof(s16_le);
@@ -44,7 +44,6 @@ tl_result apthread_exec(thread_data *data) {
             }
             prod_aclock = get_atomic_double(&pl->main_clock);
         }
-
         TRY(excv,
             get_new_ffmpeg_instance(
                 prod_aclock, data->player->media_mtdta->media_path, &ffmpeg_stream
@@ -52,10 +51,8 @@ tl_result apthread_exec(thread_data *data) {
             goto epilogue);
 
         while (true) {
-            if (feof(ffmpeg_stream)) {
-                break;
-            }
-            if (get_atomic_size_t(&pl->serial) != set_serial || get_atomic_bool(&pl->shutdown)) {
+            if (feof(ffmpeg_stream) || get_atomic_size_t(&pl->serial) != set_serial ||
+                get_atomic_bool(&pl->shutdown)) {
                 break;
             }
             size_t f_ret = fread(staging_buffer, sizeof(s16_le), staging_scount, ffmpeg_stream);
@@ -73,11 +70,18 @@ tl_result apthread_exec(thread_data *data) {
                     }
                     Sleep(10);
                 }
-                if (get_atomic_size_t(&pl->serial) != set_serial) {
+                if (get_atomic_size_t(&pl->serial) != set_serial ||
+                    get_atomic_bool(&pl->shutdown)) {
                     break;
                 }
                 pl->audio_rbuffer[get_atomic_size_t(&pl->awrite_idx)] = staging_buffer[j];
                 set_atomic_size_t(&pl->awrite_idx, nwrite_idx);
+            }
+        }
+        if (feof(ffmpeg_stream)) {
+            while (!get_atomic_bool(&pl->shutdown) &&
+                   get_atomic_size_t(&pl->serial) == set_serial) {
+                Sleep(1);
             }
         }
         _pclose(ffmpeg_stream);
@@ -154,10 +158,10 @@ static void audio_callback(
     static const size_t buffer_samples = ABUFFER_BSIZE / sizeof(s16_le);
 
     set_serial = get_atomic_size_t(&pl->serial);
-    const bool shutdown = get_atomic_bool(&pl->shutdown);
-    const bool muted = get_atomic_bool(&pl->muted);
-    const bool invalidated = get_atomic_bool(&pl->invalidated);
-    const bool playback = get_atomic_bool(&pl->playing);
+    const bool   shutdown = get_atomic_bool(&pl->shutdown);
+    const bool   muted = get_atomic_bool(&pl->muted);
+    const bool   invalidated = get_atomic_bool(&pl->invalidated);
+    const bool   playback = get_atomic_bool(&pl->playing);
     const size_t current_serial = get_atomic_size_t(&pl->serial);
     const double volume = get_atomic_double(&pl->volume);
 
@@ -172,7 +176,6 @@ static void audio_callback(
         }
     }
 
-    // Only this callback can increase or modify aread_idx.
     const size_t set_read = get_atomic_size_t(&pl->aread_idx);
     const size_t new_read = (set_read + samples_required) % (buffer_samples);
     const size_t set_write = get_atomic_size_t(&pl->awrite_idx);
@@ -204,6 +207,7 @@ static void audio_callback(
         set_atomic_size_t(&pl->aread_idx, new_read);
     }
 
+    // Only one other writer. Near-zero contention.
     AcquireSRWLockExclusive(&pl->srw_mclock);
     add_atomic_double(&pl->main_clock, (double)frameCount / (double)A_SAMP_RATE);
     ReleaseSRWLockExclusive(&pl->srw_mclock);
