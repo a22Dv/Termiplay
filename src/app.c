@@ -17,10 +17,17 @@ tl_result player_exec(
 
     player *pl = NULL;
     TRY(excv, create_player(wargv[1], &pl), goto epilogue);
-    set_atomic_bool(&pl->playing, true);
+
+    /*
+    Device-dependent. Audio playback depends on how fast the actual
+    audio hardware reacts. A silent cut of the first fractions of a second
+    will happen especially with old Bluetooth devices. (Learned the hard way)
+    */
     set_atomic_bool(&pl->looping, true);
+    set_atomic_bool(&pl->playing, true);
     set_atomic_double(&pl->volume, 0.5);
 
+    DWORD th_excv = 0;
     while (true) {
         if (get_atomic_bool(&pl->shutdown)) {
             break;
@@ -28,7 +35,16 @@ tl_result player_exec(
         key_code key = NO_INPUT;
         get_input(&key);
         TRY(excv, process_input(pl, key), goto epilogue);
-        state_print(pl);
+        state_print(pl); // DEBUG.
+
+        // Check for premature terminations.
+        for (size_t i = 0; i < pl->active_threads; ++i) {
+            if (WaitForSingleObject(pl->th_hndles[i], 0) != WAIT_TIMEOUT) {
+                GetExitCodeThread(pl->th_hndles[i], &th_excv);
+                excv = th_excv;
+                goto epilogue;
+            }
+        }
         Sleep(POLLING_RATE_MS);
     }
 epilogue:
@@ -125,11 +141,12 @@ tl_result process_input(
         add_atomic_size_t(&pl->serial, 1);
         set_csbi = new_csbi;
         return TL_SUCCESS;
-
     }
 
     AcquireSRWLockExclusive(&pl->srw_mclock);
-    if (get_atomic_double(&pl->main_clock) > pl->media_mtdta->duration) {
+
+    // We can't seek beyond the end without possibly raising errors, so we cut it a bit short (~50ms)
+    if (get_atomic_double(&pl->main_clock) > pl->media_mtdta->duration - POLLING_RATE_S) {
         if (get_atomic_bool(&pl->looping)) {
             set_atomic_bool(&pl->invalidated, true);
             set_atomic_double(&pl->main_clock, 0.0);

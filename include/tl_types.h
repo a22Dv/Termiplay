@@ -10,6 +10,10 @@ typedef struct con_frame {
     size_t uncompressed_bsize;
     size_t flength;
     size_t fwidth;
+    size_t x_start;
+    size_t y_start;
+    double prod_timestamp; // The stream timestamp start when this frame was produced.
+    size_t fnum_since_prod; // Number of frames since that stream has started.
 } con_frame;
 
 typedef struct raw_frame {
@@ -17,6 +21,17 @@ typedef struct raw_frame {
     size_t flength;
     size_t fwidth;
 } raw_frame;
+
+typedef struct con_bounds {
+    size_t log_ln;
+    size_t log_wdth;
+    size_t cell_ln;
+    size_t cell_wdth;
+    size_t start_row; // For aspect ratio preservation.
+    size_t start_col;
+    size_t abs_conln;
+    size_t abs_conwdth;
+} con_bounds;
 
 typedef volatile LONG32 atomic_bool_t;
 typedef volatile LONG64 atomic_size_t;
@@ -48,8 +63,9 @@ typedef int16_t         s16_le;
 #define MAXIMUM_RESOLUTION_HEIGHT 1080
 #define MAXIMUM_BUFFER_SIZE 2073600 // 1920 * 1080.
 #define COLOR_CHANNEL_COUNT 1
-
-
+#define BRAILLE_CHAR_DOT_LN 4
+#define BRAILLE_CHAR_DOT_WDTH 2
+#define BRAILLE_DOTS_PER_CHAR 8
 
 /// @brief Handle index.
 /// @note Order is crucial to WaitForMultipleObjects(). Do not touch.

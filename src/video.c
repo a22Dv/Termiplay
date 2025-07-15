@@ -1,3 +1,4 @@
+#include "lz4.h"
 #include "tl_errors.h"
 #include "tl_pch.h"
 #include "tl_types.h"
@@ -5,20 +6,35 @@
 #include "tl_video.h"
 
 static tl_result get_new_ffmpeg_instance(
-    const double clock_start,
-    const WCHAR *media_path,
-    FILE       **ffmpeg_instance_out
+    const double      clock_start,
+    const WCHAR      *media_path,
+    const con_bounds *bounds,
+    FILE            **ffmpeg_instance_out
 );
+
 static tl_result get_raw_frame(
-    FILE       *ffmpeg_stream,
-    raw_frame **f_out
+    FILE             *ffmpeg_stream,
+    const con_bounds *bounds,
+    raw_frame       **f_out
+);
+
+static tl_result get_console_bounds(
+    const media_mtdta *mtdta,
+    con_bounds       **out
 );
 
 static tl_result get_con_frame(
-    const raw_frame *raw,
-    const raw_frame *keyframe,
-    con_frame      **c_out
+    const raw_frame  *raw,
+    const raw_frame  *keyframe,
+    const con_bounds *bounds,
+    const double      ftime,
+    const size_t      fnum,
+    wchar_t          *wrk_buffer,
+    char             *comp_wbuffer,
+    con_frame       **c_out
 );
+
+static wchar_t map_to_braille(uint8_t *map);
 
 tl_result vpthread_exec(thread_data *data) {
     tl_result excv = TL_SUCCESS;
@@ -27,13 +43,22 @@ tl_result vpthread_exec(thread_data *data) {
     FILE               *ffmpeg_stream = NULL;
     size_t              set_serial = 0;
     double              prod_vclock = 0.0;
+    double              frametime_start = 0.0;
+    size_t              frame_number = 0;
     static const size_t fbuffer_count = VBUFFER_BSIZE / sizeof(con_frame *);
 
-    raw_frame *keyframe = malloc(sizeof(raw_frame));
-    raw_frame *staging_frame = malloc(sizeof(raw_frame));
+    raw_frame   *keyframe = malloc(sizeof(raw_frame));
+    raw_frame   *staging_frame = malloc(sizeof(raw_frame));
+    con_bounds  *bounds = malloc(sizeof(bounds));
+    wchar_t     *wrk_buffer = malloc(MAXIMUM_BUFFER_SIZE);
+    char        *compress_wbuffer = malloc(MAXIMUM_BUFFER_SIZE);
+    const WCHAR *media_path = data->player->media_mtdta->media_path;
 
     CHECK(excv, keyframe == NULL, TL_ALLOC_FAILURE, return excv);
     CHECK(excv, staging_frame == NULL, TL_ALLOC_FAILURE, return excv);
+    CHECK(excv, bounds == NULL, TL_ALLOC_FAILURE, return excv);
+    CHECK(excv, wrk_buffer == NULL, TL_ALLOC_FAILURE, return excv);
+    CHECK(excv, compress_wbuffer == NULL, TL_ALLOC_FAILURE, return excv);
 
     keyframe->data = malloc(MAXIMUM_BUFFER_SIZE);
     staging_frame->data = malloc(MAXIMUM_BUFFER_SIZE);
@@ -64,11 +89,11 @@ tl_result vpthread_exec(thread_data *data) {
                 Sleep(5);
             }
             prod_vclock = get_atomic_double(&pl->main_clock);
+            frametime_start = prod_vclock;
+            frame_number = 0;
         }
-        TRY(excv,
-            get_new_ffmpeg_instance(
-                prod_vclock, data->player->media_mtdta->media_path, &ffmpeg_stream
-            ),
+        TRY(excv, get_console_bounds(data->player->media_mtdta, &bounds), goto epilogue);
+        TRY(excv, get_new_ffmpeg_instance(prod_vclock, media_path, bounds, &ffmpeg_stream),
             goto epilogue);
 
         while (true) {
@@ -87,10 +112,11 @@ tl_result vpthread_exec(thread_data *data) {
             if (get_atomic_size_t(&pl->serial) != set_serial || get_atomic_bool(&pl->shutdown)) {
                 break;
             }
-            TRY(excv, get_raw_frame(ffmpeg_stream, &staging_frame), goto epilogue);
+            TRY(excv, get_raw_frame(ffmpeg_stream, bounds, &staging_frame), goto epilogue);
             TRY(excv,
                 get_con_frame(
-                    staging_frame, keyframe, &pl->video_rbuffer[get_atomic_size_t(&pl->vwrite_idx)]
+                    staging_frame, keyframe, bounds, frametime_start, frame_number, wrk_buffer,
+                    compress_wbuffer, &pl->video_rbuffer[get_atomic_size_t(&pl->vwrite_idx)]
                 ),
                 goto epilogue);
             set_atomic_size_t(&pl->vwrite_idx, nwrite_idx);
@@ -121,33 +147,231 @@ epilogue:
     }
     destroy_rawframe(&staging_frame);
     destroy_rawframe(&keyframe);
+    free(bounds);
+    free(wrk_buffer);
+    free(compress_wbuffer);
     return excv;
 }
 
 static tl_result get_new_ffmpeg_instance(
-    const double clock_start,
-    const WCHAR *media_path,
-    FILE       **ffmpeg_instance_out
+    const double      clock_start,
+    const WCHAR      *media_path,
+    const con_bounds *bounds,
+    FILE            **ffmpeg_instance_out
 ) {
-    return TL_SUCCESS;
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, clock_start < 0.0, TL_INVALID_ARG, return excv);
+    CHECK(excv, media_path == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, bounds == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, ffmpeg_instance_out == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, *ffmpeg_instance_out != NULL, TL_ALREADY_INITIALIZED, return excv);
+    wchar_t cmd[GBUFFER_BSIZE];
+
+    int swret = swprintf_s(
+        cmd, GBUFFER_BSIZE,
+        L"ffmpeg -v quiet -ss %lf -i \"%ls\" -an -s %zux%zu -f rawvideo -pix_fmt gray -",
+        clock_start, media_path, bounds->log_wdth, bounds->log_ln
+    );
+    CHECK(excv, swret < 0, TL_FORMAT_FAILURE, return excv);
+
+    *ffmpeg_instance_out = _wpopen(cmd, L"rb");
+    CHECK(excv, *ffmpeg_instance_out == NULL, TL_PIPE_CREATION_FAILURE, return excv);
+    return excv;
 }
 
 static tl_result get_raw_frame(
-    FILE       *ffmpeg_stream,
-    raw_frame **f_out
+    FILE             *ffmpeg_stream,
+    const con_bounds *bounds,
+    raw_frame       **f_out
 ) {
-    // f_out must be allocated for it, is guaranteed to not write more than MAX_BUFFER_SIZE.
-    return TL_SUCCESS;
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, ffmpeg_stream == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, bounds == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, f_out == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, *f_out == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, (*f_out)->data == NULL, TL_NULL_ARG, return excv);
+    raw_frame *rf = *f_out;
+    if (feof(ffmpeg_stream)) {
+        rf->flength = 0;
+        rf->fwidth = 0;
+        return excv;
+    }
+    size_t     px_wdth = bounds->log_wdth;
+    size_t     px_ln = bounds->log_ln;
+    raw_frame *out = *f_out;
+    size_t     px_ret = fread(out->data, sizeof(uint8_t), px_wdth * px_ln, ffmpeg_stream);
+    CHECK(excv, px_ret != px_wdth * px_ln, TL_INCOMPLETE_DATA, return excv);
+    return excv;
 }
 
 static tl_result get_con_frame(
-    const raw_frame *raw,
-    const raw_frame *keyframe,
-    con_frame      **c_out
+    const raw_frame  *raw,
+    const raw_frame  *keyframe,
+    const con_bounds *bounds,
+    const double      ftime,
+    const size_t      fnum,
+    wchar_t          *wrk_buffer,
+    char             *comp_wbuffer,
+    con_frame       **c_out
 ) {
-    // A keyframe with 0 width & height means the full frame will be processed without
-    // delta-diffing.
-    return TL_SUCCESS;
+
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, raw == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, keyframe == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, bounds == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, c_out == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, *c_out != NULL, TL_ALREADY_INITIALIZED, return excv);
+    bool no_keyframe = keyframe->flength == 0 && keyframe->fwidth == 0;
+    CHECK(
+        excv, !no_keyframe && keyframe->flength != raw->flength || keyframe->fwidth != raw->fwidth,
+        TL_INVALID_ARG, return excv
+    );
+    if (bounds->abs_conln * bounds->abs_conwdth * sizeof(wchar_t) > MAXIMUM_BUFFER_SIZE ||
+        LZ4_compressBound((int)(bounds->cell_ln * bounds->cell_wdth)) > MAXIMUM_BUFFER_SIZE) {
+        // Unsupported resolution. `vcthread` will process NULL `con_frame*`s as empty frames.
+        return excv;
+    }
+    *c_out = malloc(sizeof(con_frame));
+    CHECK(excv, *c_out == NULL, TL_ALLOC_FAILURE, return excv);
+    con_frame *cframe = *c_out;
+    cframe->flength = bounds->cell_ln;
+    cframe->fwidth = bounds->cell_wdth;
+    cframe->uncompressed_bsize = cframe->flength * cframe->fwidth * sizeof(wchar_t);
+    cframe->x_start = bounds->start_col;
+    cframe->y_start = bounds->start_row;
+
+    // INSERT HERE:
+    // TODO: Floyd-Steinberg dithering. Edit raw_frame* raw before passing to braille converter.
+
+    const size_t total_chars = cframe->flength * cframe->fwidth;
+    const size_t alignment_matrix[BRAILLE_DOTS_PER_CHAR] = {
+        0,
+        1,
+        bounds->log_wdth,
+        bounds->log_wdth + 1,
+        bounds->log_wdth * 2,
+        bounds->log_wdth * 2 + 1,
+        bounds->log_wdth * 3,
+        bounds->log_wdth * 3 + 1,
+    };
+
+    const size_t total_px = bounds->log_ln * bounds->log_wdth;
+    size_t       starting_px_idx = 0;
+    uint8_t      bitmap[BRAILLE_DOTS_PER_CHAR] = {0, 0, 0, 0, 0, 0, 0, 0};
+    size_t       data_idx = 0;
+    size_t       px_idx = 0;
+
+    for (size_t ych = 0; ych < bounds->cell_ln; ++ych) {
+        for (size_t xch = 0; xch < bounds->cell_wdth; ++xch) {
+            starting_px_idx =
+                ych * BRAILLE_CHAR_DOT_LN * bounds->log_wdth + xch * BRAILLE_CHAR_DOT_WDTH;
+            for (size_t bdot_i = 0; bdot_i < BRAILLE_DOTS_PER_CHAR; ++bdot_i) {
+                px_idx = starting_px_idx + alignment_matrix[bdot_i];
+                bitmap[bdot_i] = raw->data[px_idx];
+            }
+            wchar_t braille_char = map_to_braille(bitmap);
+            wrk_buffer[data_idx] = braille_char;
+            data_idx++;
+        }
+    }
+
+    int lz4_compressed_size = LZ4_compress_default(
+        (char *)wrk_buffer, comp_wbuffer, (int)cframe->uncompressed_bsize, MAXIMUM_BUFFER_SIZE
+    );
+    CHECK(excv, lz4_compressed_size == 0, TL_COMPRESS_ERR, goto epilogue);
+    cframe->compressed_bsize = (size_t)lz4_compressed_size;
+    cframe->compressed_data = malloc(cframe->compressed_bsize);
+    cframe->fnum_since_prod = fnum;
+    cframe->prod_timestamp = ftime;
+    memcpy(cframe->compressed_data, comp_wbuffer, cframe->compressed_bsize);
+
+epilogue:
+    if (excv != TL_SUCCESS) {
+        destroy_conframe(&cframe);
+    }
+    return excv;
 }
 
-tl_result vcthread_exec(thread_data *data) { return TL_SUCCESS; }
+static tl_result get_console_bounds(
+    const media_mtdta *mtdta,
+    con_bounds       **out
+) {
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, out == NULL, TL_NULL_ARG, return excv);
+    CHECK(excv, *out == NULL, TL_INVALID_ARG, return excv);
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    HANDLE                     stdouth = GetStdHandle(STD_OUTPUT_HANDLE);
+    CHECK(excv, stdouth == NULL || stdouth == INVALID_HANDLE_VALUE, TL_OS_ERR, return excv);
+    CHECK(excv, !GetConsoleScreenBufferInfo(stdouth, &csbi), TL_CONSOLE_ERR, return excv);
+
+    con_bounds *b = *out;
+
+    // + 1 as these are inclusive coordinates.
+    b->cell_ln = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    b->cell_wdth = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    b->abs_conln = b->cell_ln;
+    b->abs_conwdth = b->cell_wdth;
+
+    const double con_aspect = (double)b->cell_wdth / (double)b->cell_ln;
+    const double v_aspect = (double)mtdta->width / (double)mtdta->height;
+
+    // Video wider than console.
+    if (v_aspect > con_aspect) {
+        // Limiting factor is width. Length to scale.
+        b->cell_ln = (size_t)((double)b->cell_wdth / v_aspect);
+    } else {
+        // Limiting factor is height. Width to scale.
+        b->cell_wdth = (size_t)((double)b->cell_ln * v_aspect);
+    }
+    // Always even. log_ln and log_wdth is guaranteed to fill all dots of cell_ln and cell_wdth.
+    b->log_ln = b->cell_ln * BRAILLE_CHAR_DOT_LN;
+    b->log_wdth = b->cell_wdth * BRAILLE_CHAR_DOT_WDTH;
+    b->start_row = ((csbi.srWindow.Bottom - csbi.srWindow.Top) - b->cell_ln) / 2;
+    b->start_col = ((csbi.srWindow.Right - csbi.srWindow.Left) - b->cell_wdth) / 2;
+    return excv;
+}
+
+static wchar_t map_to_braille(uint8_t *map) {
+    static const wchar_t main_offset = 0x2800;
+    static const uint8_t alignment_shifts[BRAILLE_DOTS_PER_CHAR] = {0, 3, 1, 4, 2, 5, 6, 7};
+    wchar_t              bchar = main_offset;
+    uint8_t              set = 0;
+    for (size_t i = 0; i < BRAILLE_DOTS_PER_CHAR; ++i) {
+        set = map[i] < 128 ? 0 : 1;
+        bchar |= (set << alignment_shifts[i]);
+    }
+    return bchar;
+}
+
+tl_result vcthread_exec(thread_data *data) {
+    tl_result           excv = TL_SUCCESS;
+    player             *pl = data->player;
+    size_t              set_serial = 0;
+    static const size_t vbuffer_frames = VBUFFER_BSIZE / sizeof(con_frame *);
+    con_frame         **fbuf = pl->video_rbuffer;
+    while (true) {
+        if (get_atomic_bool(&pl->shutdown)) {
+            break;
+        }
+        const size_t cserial = get_atomic_size_t(&pl->serial);
+        const size_t vread = get_atomic_size_t(&pl->vread_idx);
+        const size_t vwrite = get_atomic_size_t(&pl->vwrite_idx);
+        const size_t new_vread = (vread + 1) % vbuffer_frames;
+        if (set_serial != cserial) {
+            set_serial = cserial;
+            Sleep(1);
+            continue;
+        }
+        if (new_vread == vwrite || vread == vwrite) {
+            Sleep(1);
+            continue;
+        }
+        if (fbuf[vread] == NULL) {
+            // Zero out everything. 
+            Sleep(1000 / V_FPS);
+            continue;
+        }
+        Sleep(1);
+    }
+    return excv;
+}

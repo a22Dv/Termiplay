@@ -380,9 +380,12 @@ void destroy_player(player **pl_ptr) {
     }
     free((*pl_ptr)->gwcvbuffer);
     free((*pl_ptr)->gwpvbuffer);
-    for (size_t i = 0; i < VBUFFER_BSIZE / sizeof(con_frame *); ++i) {
-        destroy_conframe(&(*pl_ptr)->video_rbuffer[i]);
+    if ((*pl_ptr)->video_rbuffer != NULL) {
+        for (size_t i = 0; i < VBUFFER_BSIZE / sizeof(con_frame *); ++i) {
+            destroy_conframe(&(*pl_ptr)->video_rbuffer[i]);
+        }
     }
+
     free((*pl_ptr)->video_rbuffer);
     free((*pl_ptr)->audio_rbuffer);
     destroy_media_mtdta(&(*pl_ptr)->media_mtdta);

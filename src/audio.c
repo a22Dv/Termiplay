@@ -27,6 +27,7 @@ tl_result apthread_exec(thread_data *data) {
     static const size_t staging_scount = sizeof(staging_buffer) / sizeof(s16_le);
     static const size_t abuffer_scount = ABUFFER_BSIZE / sizeof(s16_le);
     FILE               *ffmpeg_stream = NULL;
+    
     while (true) {
         if (get_atomic_bool(&pl->shutdown)) {
             break;
@@ -108,7 +109,7 @@ static tl_result get_new_ffmpeg_instance(
     wchar_t cmd[GBUFFER_BSIZE];
     int     swret = swprintf_s(
         cmd, GBUFFER_BSIZE,
-        L"ffmpeg -v quiet -ss %lf -i \"%ls\" -f s16le -ar %i -ac %i "
+        L"ffmpeg -nostdin -v quiet -ss %lf -i \"%ls\" -f s16le -ar %i -ac %i "
         L"-vn -",
         clock_start, media_path, A_SAMP_RATE, A_CHANNELS
     );
@@ -122,7 +123,6 @@ tl_result acthread_exec(thread_data *data) {
     tl_result excv = TL_SUCCESS;
     CHECK(excv, data == NULL, TL_NULL_ARG, return excv);
     player *pl = data->player;
-
     ma_device_config aconfig = ma_device_config_init(ma_device_type_playback);
     aconfig.playback.channels = A_CHANNELS;
     aconfig.sampleRate = A_SAMP_RATE;

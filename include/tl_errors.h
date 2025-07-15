@@ -18,7 +18,8 @@
     X(TL_CONSOLE_ERR, "CONSOLE ERROR")                                                             \
     X(TL_INVALID_FILE, "INVALID FILE")                                                             \
     X(TL_INCOMPLETE_DATA, "INCOMPLETE DATA")                                                       \
-    X(TL_MINIAUDIO_ERR, "MINIAUDIO ERROR")
+    X(TL_MINIAUDIO_ERR, "MINIAUDIO ERROR")                                                         \
+    X(TL_COMPRESS_ERR, "COMPRESSION ERROR")
 
 /// @brief Custom return code/value.
 typedef enum _tl_result {
