@@ -36,6 +36,8 @@ static tl_result get_con_frame(
 
 static wchar_t map_to_braille(uint8_t *map);
 
+static tl_result clear_screen(HANDLE stdouth);
+
 tl_result vpthread_exec(thread_data *data) {
     tl_result excv = TL_SUCCESS;
     CHECK(excv, data == NULL, TL_NULL_ARG, return excv);
@@ -49,7 +51,7 @@ tl_result vpthread_exec(thread_data *data) {
 
     raw_frame   *keyframe = malloc(sizeof(raw_frame));
     raw_frame   *staging_frame = malloc(sizeof(raw_frame));
-    con_bounds  *bounds = malloc(sizeof(bounds));
+    con_bounds  *bounds = malloc(sizeof(con_bounds));
     wchar_t     *wrk_buffer = malloc(MAXIMUM_BUFFER_SIZE);
     char        *compress_wbuffer = malloc(MAXIMUM_BUFFER_SIZE);
     const WCHAR *media_path = data->player->media_mtdta->media_path;
@@ -86,7 +88,14 @@ tl_result vpthread_exec(thread_data *data) {
             }
             set_serial = get_atomic_size_t(&pl->serial);
             while (get_atomic_bool(&pl->invalidated)) {
+                if (get_atomic_size_t(&pl->serial) != set_serial ||
+                    get_atomic_bool(&pl->shutdown)) {
+                    break;
+                }
                 Sleep(5);
+            }
+            if (get_atomic_size_t(&pl->serial) != set_serial) {
+                continue;
             }
             prod_vclock = get_atomic_double(&pl->main_clock);
             frametime_start = prod_vclock;
@@ -201,6 +210,8 @@ static tl_result get_raw_frame(
     raw_frame *out = *f_out;
     size_t     px_ret = fread(out->data, sizeof(uint8_t), px_wdth * px_ln, ffmpeg_stream);
     CHECK(excv, px_ret != px_wdth * px_ln, TL_INCOMPLETE_DATA, return excv);
+    out->flength = px_ln;
+    out->fwidth = px_wdth;
     return excv;
 }
 
@@ -223,7 +234,9 @@ static tl_result get_con_frame(
     CHECK(excv, *c_out != NULL, TL_ALREADY_INITIALIZED, return excv);
     bool no_keyframe = keyframe->flength == 0 && keyframe->fwidth == 0;
     CHECK(
-        excv, !no_keyframe && keyframe->flength != raw->flength || keyframe->fwidth != raw->fwidth,
+        excv,
+        !no_keyframe && keyframe->flength != raw->flength ||
+            !no_keyframe && keyframe->fwidth != raw->fwidth,
         TL_INVALID_ARG, return excv
     );
     if (bounds->abs_conln * bounds->abs_conwdth * sizeof(wchar_t) > MAXIMUM_BUFFER_SIZE ||
@@ -326,8 +339,8 @@ static tl_result get_console_bounds(
     // Always even. log_ln and log_wdth is guaranteed to fill all dots of cell_ln and cell_wdth.
     b->log_ln = b->cell_ln * BRAILLE_CHAR_DOT_LN;
     b->log_wdth = b->cell_wdth * BRAILLE_CHAR_DOT_WDTH;
-    b->start_row = ((csbi.srWindow.Bottom - csbi.srWindow.Top) - b->cell_ln) / 2;
-    b->start_col = ((csbi.srWindow.Right - csbi.srWindow.Left) - b->cell_wdth) / 2;
+    b->start_row = ((csbi.srWindow.Bottom - csbi.srWindow.Top + 1) - b->cell_ln) / 2;
+    b->start_col = ((csbi.srWindow.Right - csbi.srWindow.Left + 1) - b->cell_wdth) / 2;
     return excv;
 }
 
@@ -343,35 +356,100 @@ static wchar_t map_to_braille(uint8_t *map) {
     return bchar;
 }
 
+/*
+ * TODO for tomorrow: A few potential bugs and improvements to look into.
+ * 2.  [CRITICAL] Consumer thread `vcthread_exec` is stalled and leaks memory:
+ *     - It never increments the ring buffer read index (`pl->vread_idx`). The
+ *       producer (`vpthread_exec`) will fill the buffer and then block forever.
+ *     - It never frees the `con_frame` it reads from the buffer. This is a memory leak.
+ *     - FIX: After processing a frame, call `destroy_conframe(&fbuf[vread])`
+ *       and then `set_atomic_size_t(&pl->vread_idx, new_vread)`.
+ */
+
 tl_result vcthread_exec(thread_data *data) {
     tl_result           excv = TL_SUCCESS;
     player             *pl = data->player;
     size_t              set_serial = 0;
     static const size_t vbuffer_frames = VBUFFER_BSIZE / sizeof(con_frame *);
     con_frame         **fbuf = pl->video_rbuffer;
+
+    CHAR_INFO *conbuf = NULL;
+    SMALL_RECT write_region = {.Bottom = 0, .Left = 0, .Right = 0, .Top = 0};
+    COORD      conbuf_size = {.X = 0, .Y = 0};
+    HANDLE     stdouth = GetStdHandle(STD_OUTPUT_HANDLE);
+    CHECK(excv, stdouth == NULL || stdouth == INVALID_HANDLE_VALUE, TL_OS_ERR, return excv);
+
     while (true) {
-        if (get_atomic_bool(&pl->shutdown)) {
+        const bool   shutdown = get_atomic_bool(&pl->shutdown);
+        const bool   playback = get_atomic_bool(&pl->playing);
+        const size_t cserial = get_atomic_size_t(&pl->serial);
+        if (shutdown) {
             break;
         }
-        const size_t cserial = get_atomic_size_t(&pl->serial);
-        const size_t vread = get_atomic_size_t(&pl->vread_idx);
-        const size_t vwrite = get_atomic_size_t(&pl->vwrite_idx);
-        const size_t new_vread = (vread + 1) % vbuffer_frames;
-        if (set_serial != cserial) {
+        if (cserial != set_serial) {
             set_serial = cserial;
-            Sleep(1);
+
+            // Prevents resetting again and again while seeking.
+            while (get_atomic_bool(&pl->invalidated)) {
+                if (shutdown || set_serial != cserial) {
+                    break;
+                }
+                Sleep(5);
+            }
+            if (get_atomic_size_t(&pl->serial) != set_serial) {
+                continue;
+            }
+        }
+        if (!playback) {
+            Sleep(10);
             continue;
         }
-        if (new_vread == vwrite || vread == vwrite) {
-            Sleep(1);
+        const size_t vread = get_atomic_size_t(&pl->vread_idx);
+        const size_t vwrite = get_atomic_size_t(&pl->vwrite_idx);
+        const size_t nvread = (vread + 1) % vbuffer_frames;
+
+        if (vread == vwrite) {
+            Sleep(5);
             continue;
         }
         if (fbuf[vread] == NULL) {
-            // Zero out everything. 
-            Sleep(1000 / V_FPS);
+            clear_screen(stdouth);
+            set_atomic_size_t(&pl->vread_idx, nvread);
+            Sleep(5);
             continue;
         }
-        Sleep(1);
+        if (conbuf == NULL || fbuf[vread]->flength != conbuf_size.Y ||
+            fbuf[vread]->fwidth != conbuf_size.X) {
+            free(conbuf);
+            conbuf = malloc(fbuf[vread]->flength * fbuf[vread]->fwidth * sizeof(CHAR_INFO));
+            CHECK(excv, conbuf == NULL, TL_ALLOC_FAILURE, goto epilogue);
+        }
+        const double pts =
+            fbuf[vread]->prod_timestamp + ((double)1 / V_FPS) * fbuf[vread]->fnum_since_prod;
+
+        // Decompress frame data, send to char info structure, then call WriteConsoleOutputW().
     }
+epilogue:
+    free(conbuf);
+    return excv;
+}
+
+static tl_result clear_screen(HANDLE stdouth) {
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, stdouth == NULL || stdouth == INVALID_HANDLE_VALUE, TL_INVALID_ARG, return excv);
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    CHECK(excv, !GetConsoleScreenBufferInfo(stdouth, &csbi), TL_OS_ERR, return excv);
+    const DWORD cellc = csbi.dwSize.X * csbi.dwSize.Y;
+    const COORD hm = {.X = 0, .Y = 0};
+    DWORD       coutc = 0;
+    CHECK(
+        excv, !FillConsoleOutputCharacterW(stdouth, L' ', cellc, hm, &coutc), TL_CONSOLE_ERR,
+        return excv
+    );
+    CHECK(
+        excv, !FillConsoleOutputAttribute(stdouth, csbi.wAttributes, cellc, hm, &coutc),
+        TL_CONSOLE_ERR, return excv
+    );
+    CHECK(excv, !SetConsoleCursorPosition(stdouth, hm), TL_CONSOLE_ERR, return excv);
     return excv;
 }

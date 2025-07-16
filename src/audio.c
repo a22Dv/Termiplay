@@ -185,7 +185,6 @@ static void audio_callback(
         memset(pOutput, 0, samples_required * sizeof(s16_le));
         return;
     }
-
     if (!muted && playback && !invalidated && !shutdown && valid_samples >= samples_required) {
         if (set_read + samples_required < (buffer_samples)) {
             memcpy(pOutput, &pl->audio_rbuffer[set_read], samples_required * sizeof(s16_le));

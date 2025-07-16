@@ -8,8 +8,8 @@ typedef struct con_frame {
     char  *compressed_data;
     size_t compressed_bsize;
     size_t uncompressed_bsize;
-    size_t flength;
-    size_t fwidth;
+    size_t flength; // Character cells that the frame occupies.
+    size_t fwidth; // Character cells that the frame occupies.
     size_t x_start;
     size_t y_start;
     double prod_timestamp; // The stream timestamp start when this frame was produced.
@@ -18,8 +18,8 @@ typedef struct con_frame {
 
 typedef struct raw_frame {
     uint8_t* data;
-    size_t flength;
-    size_t fwidth;
+    size_t flength; // In pixels for the actual frame.
+    size_t fwidth; // In pixels for the actual frame.
 } raw_frame;
 
 typedef struct con_bounds {
