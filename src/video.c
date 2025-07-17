@@ -200,15 +200,17 @@ static tl_result get_raw_frame(
     CHECK(excv, *f_out == NULL, TL_NULL_ARG, return excv);
     CHECK(excv, (*f_out)->data == NULL, TL_NULL_ARG, return excv);
     raw_frame *rf = *f_out;
+    size_t     px_wdth = bounds->log_wdth;
+    size_t     px_ln = bounds->log_ln;
+    raw_frame *out = *f_out;
+    size_t     px_ret = fread(out->data, sizeof(uint8_t), px_wdth * px_ln, ffmpeg_stream);
+
+    /// BUG: End of video when 0 bytes not handled.
     if (feof(ffmpeg_stream)) {
         rf->flength = 0;
         rf->fwidth = 0;
         return excv;
     }
-    size_t     px_wdth = bounds->log_wdth;
-    size_t     px_ln = bounds->log_ln;
-    raw_frame *out = *f_out;
-    size_t     px_ret = fread(out->data, sizeof(uint8_t), px_wdth * px_ln, ffmpeg_stream);
     CHECK(excv, px_ret != px_wdth * px_ln, TL_INCOMPLETE_DATA, return excv);
     out->flength = px_ln;
     out->fwidth = px_wdth;
@@ -319,28 +321,38 @@ static tl_result get_console_bounds(
 
     con_bounds *b = *out;
 
-    // + 1 as these are inclusive coordinates.
+    // Get the full console window size in character cells.
     b->cell_ln = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
     b->cell_wdth = csbi.srWindow.Right - csbi.srWindow.Left + 1;
     b->abs_conln = b->cell_ln;
     b->abs_conwdth = b->cell_wdth;
 
-    const double con_aspect = (double)b->cell_wdth / (double)b->cell_ln;
+    const double char_pixel_aspect = (double)BRAILLE_CHAR_DOT_WDTH / (double)BRAILLE_CHAR_DOT_LN;
+    const double con_pixel_aspect = ((double)b->cell_wdth / (double)b->cell_ln) * char_pixel_aspect;
     const double v_aspect = (double)mtdta->width / (double)mtdta->height;
-
-    // Video wider than console.
-    if (v_aspect > con_aspect) {
-        // Limiting factor is width. Length to scale.
-        b->cell_ln = (size_t)((double)b->cell_wdth / v_aspect);
+    
+   
+    if (v_aspect > con_pixel_aspect) {
+         // Video wider than console.
+        b->cell_ln = (size_t)(((double)b->cell_wdth * char_pixel_aspect) / v_aspect);
     } else {
-        // Limiting factor is height. Width to scale.
-        b->cell_wdth = (size_t)((double)b->cell_ln * v_aspect);
+        // Video narrower than console.
+        b->cell_wdth = (size_t)(((double)b->cell_ln / char_pixel_aspect) * v_aspect);
     }
-    // Always even. log_ln and log_wdth is guaranteed to fill all dots of cell_ln and cell_wdth.
+
+    // Ensure the pixel dimensions are an even multiple of the braille character dots.
+    if (b->log_wdth % BRAILLE_CHAR_DOT_WDTH != 0) {
+        b->log_wdth -= (b->log_wdth % BRAILLE_CHAR_DOT_WDTH);
+    }
+    if (b->log_ln % BRAILLE_CHAR_DOT_LN != 0) {
+        b->log_ln -= (b->log_ln % BRAILLE_CHAR_DOT_LN);
+    }
     b->log_ln = b->cell_ln * BRAILLE_CHAR_DOT_LN;
     b->log_wdth = b->cell_wdth * BRAILLE_CHAR_DOT_WDTH;
-    b->start_row = ((csbi.srWindow.Bottom - csbi.srWindow.Top + 1) - b->cell_ln) / 2;
-    b->start_col = ((csbi.srWindow.Right - csbi.srWindow.Left + 1) - b->cell_wdth) / 2;
+    
+    // Center the output frame in the console window
+    b->start_row = (b->abs_conln - b->cell_ln) / 2;
+    b->start_col = (b->abs_conwdth - b->cell_wdth) / 2;
     return excv;
 }
 
@@ -356,16 +368,6 @@ static wchar_t map_to_braille(uint8_t *map) {
     return bchar;
 }
 
-/*
- * TODO for tomorrow: A few potential bugs and improvements to look into.
- * 2.  [CRITICAL] Consumer thread `vcthread_exec` is stalled and leaks memory:
- *     - It never increments the ring buffer read index (`pl->vread_idx`). The
- *       producer (`vpthread_exec`) will fill the buffer and then block forever.
- *     - It never frees the `con_frame` it reads from the buffer. This is a memory leak.
- *     - FIX: After processing a frame, call `destroy_conframe(&fbuf[vread])`
- *       and then `set_atomic_size_t(&pl->vread_idx, new_vread)`.
- */
-
 tl_result vcthread_exec(thread_data *data) {
     tl_result           excv = TL_SUCCESS;
     player             *pl = data->player;
@@ -378,6 +380,9 @@ tl_result vcthread_exec(thread_data *data) {
     COORD      conbuf_size = {.X = 0, .Y = 0};
     HANDLE     stdouth = GetStdHandle(STD_OUTPUT_HANDLE);
     CHECK(excv, stdouth == NULL || stdouth == INVALID_HANDLE_VALUE, TL_OS_ERR, return excv);
+    const COORD hm = {.X = 0, .Y = 0};
+    wchar_t    *uncomp_fbuffer = malloc(MAXIMUM_BUFFER_SIZE);
+    CHECK(excv, uncomp_fbuffer == NULL, TL_ALLOC_FAILURE, return excv);
 
     while (true) {
         const bool   shutdown = get_atomic_bool(&pl->shutdown);
@@ -404,6 +409,7 @@ tl_result vcthread_exec(thread_data *data) {
             Sleep(10);
             continue;
         }
+
         const size_t vread = get_atomic_size_t(&pl->vread_idx);
         const size_t vwrite = get_atomic_size_t(&pl->vwrite_idx);
         const size_t nvread = (vread + 1) % vbuffer_frames;
@@ -421,16 +427,56 @@ tl_result vcthread_exec(thread_data *data) {
         if (conbuf == NULL || fbuf[vread]->flength != conbuf_size.Y ||
             fbuf[vread]->fwidth != conbuf_size.X) {
             free(conbuf);
-            conbuf = malloc(fbuf[vread]->flength * fbuf[vread]->fwidth * sizeof(CHAR_INFO));
+            conbuf = calloc(fbuf[vread]->flength * fbuf[vread]->fwidth, sizeof(CHAR_INFO));
             CHECK(excv, conbuf == NULL, TL_ALLOC_FAILURE, goto epilogue);
+            conbuf_size.X = (SHORT)fbuf[vread]->fwidth;
+            conbuf_size.Y = (SHORT)fbuf[vread]->flength;
         }
-        const double pts =
-            fbuf[vread]->prod_timestamp + ((double)1 / V_FPS) * fbuf[vread]->fnum_since_prod;
+        const con_frame *frame = fbuf[vread];
+        const double     pts = frame->prod_timestamp + ((double)1 / V_FPS) * frame->fnum_since_prod;
+        AcquireSRWLockShared(&pl->srw_mclock);
+        const double clock = get_atomic_double(&pl->main_clock);
+        ReleaseSRWLockShared(&pl->srw_mclock);
+        const double drift = clock - pts;
 
-        // Decompress frame data, send to char info structure, then call WriteConsoleOutputW().
+        // Frame skip.
+        // if (drift > 1) {
+        //     destroy_conframe(&fbuf[vread]);
+        //     set_atomic_size_t(&pl->vread_idx, nvread);
+        //     continue;
+        // }
+        // Ahead.
+        if (clock - pts < -(double)2 / V_FPS) {
+            Sleep((DWORD)((-drift) * 1000.0));
+            continue;
+        }
+        int lz4_dret = LZ4_decompress_fast(
+            frame->compressed_data, (char *)uncomp_fbuffer, (int)frame->uncompressed_bsize
+        );
+        CHECK(excv, lz4_dret == 0, TL_COMPRESS_ERR, goto epilogue);
+
+        const size_t tchars = frame->flength * frame->fwidth;
+        for (size_t i = 0; i < tchars; ++i) {
+            conbuf[i].Char.UnicodeChar = uncomp_fbuffer[i];
+            conbuf[i].Attributes |= FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+            conbuf[i].Attributes &= ~(BACKGROUND_BLUE | BACKGROUND_GREEN | BACKGROUND_RED);
+        }
+        write_region.Left = (SHORT)fbuf[vread]->x_start;
+        write_region.Top = (SHORT)fbuf[vread]->y_start;
+        write_region.Right = (SHORT)(fbuf[vread]->x_start + fbuf[vread]->fwidth - 1);
+        write_region.Bottom = (SHORT)(fbuf[vread]->y_start + fbuf[vread]->flength - 1);
+        CHECK(
+            excv, !WriteConsoleOutputW(stdouth, conbuf, conbuf_size, hm, &write_region),
+            TL_CONSOLE_ERR, goto epilogue
+        );
+        Sleep(33);
+        destroy_conframe(&fbuf[vread]);
+        set_atomic_size_t(&pl->vread_idx, nvread);
     }
 epilogue:
+    DWORD err = GetLastError();
     free(conbuf);
+    free(uncomp_fbuffer);
     return excv;
 }
 
