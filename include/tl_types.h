@@ -64,6 +64,8 @@ typedef int16_t         s16_le;
 #define BRAILLE_CHAR_DOT_LN 4
 #define BRAILLE_CHAR_DOT_WDTH 2
 #define BRAILLE_DOTS_PER_CHAR 8
+#define BAYER_4X4_MATRIX_SIZE 16
+#define FLOYD_STEINBERG_KERNEL_SIZE 4
 
 /// @brief Handle index.
 /// @note Order is crucial to WaitForMultipleObjects(). Do not touch.
@@ -98,11 +100,12 @@ typedef enum key_code {
 typedef enum dither_mode {
     DTH_THRESHOLDING,
     DTH_FLOYD_STEINBERG,
-    DTH_BAYER_2X2,
+    DTH_BAYER_4X4,
     DTH_HALFTONE,
     DTH_BLUE,
     DTH_MODES
 } dither_mode;
+
 /// @brief Media metadata.
 typedef struct media_mtdta {
     WCHAR *media_path;

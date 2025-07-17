@@ -249,7 +249,7 @@ tl_result create_player(
     set_atomic_size_t(&pl->awrite_idx, 0);
     set_atomic_size_t(&pl->vwrite_idx, 0);
     set_atomic_size_t(&pl->vread_idx, 0);
-    set_atomic_size_t(&pl->dither_mode, 1); // Floyd-Steinberg default.
+    set_atomic_size_t(&pl->dither_mode, DTH_BLUE); 
     set_atomic_size_t(&pl->ext_assets_ptr, 0);
     InitializeSRWLock(&pl->srw_mclock);
     pl->active_threads = 0;
