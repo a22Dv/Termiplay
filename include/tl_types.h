@@ -9,17 +9,16 @@ typedef struct con_frame {
     size_t compressed_bsize;
     size_t uncompressed_bsize;
     size_t flength; // Character cells that the frame occupies.
-    size_t fwidth; // Character cells that the frame occupies.
+    size_t fwidth;  // Character cells that the frame occupies.
     size_t x_start;
     size_t y_start;
-    double prod_timestamp; // The stream timestamp start when this frame was produced.
-    size_t fnum_since_prod; // Number of frames since that stream has started.
+    double pts;
 } con_frame;
 
 typedef struct raw_frame {
-    uint8_t* data;
-    size_t flength; // In pixels for the actual frame.
-    size_t fwidth; // In pixels for the actual frame.
+    uint8_t *data;
+    size_t   flength; // In pixels for the actual frame.
+    size_t   fwidth;  // In pixels for the actual frame.
 } raw_frame;
 
 typedef struct con_bounds {
@@ -37,7 +36,6 @@ typedef volatile LONG32 atomic_bool_t;
 typedef volatile LONG64 atomic_size_t;
 typedef volatile LONG64 atomic_double_t;
 typedef int16_t         s16_le;
-
 
 #define EXT_KEYCODE 224
 #define ARR_UP_KEYC 72
@@ -91,6 +89,8 @@ typedef enum key_code {
     ARR_LEFT,  // Seek forward.
     ARR_RIGHT, // Seek backward.
     M,         // Mute.
+    G,         // Debug print.
+    D,         // Switch through dithering modes. 0 NONE | 1 FLYD-STBRG | 2 BAYER | 3 HALFTONE
     Q          // Shutdown.
 } key_code;
 
@@ -122,7 +122,7 @@ typedef struct thread_data {
 
 /// @brief Player.
 typedef struct player {
-    con_frame         **video_rbuffer;
+    con_frame     **video_rbuffer;
     s16_le         *audio_rbuffer;
     char           *gwpvbuffer; // Work buffer. VProducer.
     char           *gwcvbuffer; // Work buffer. VConsumer.

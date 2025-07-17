@@ -21,7 +21,7 @@ tl_result player_exec(
     /*
     Device-dependent. Audio playback depends on how fast the actual
     audio hardware reacts. A silent cut of the first fractions of a second
-    will happen especially with old Bluetooth devices. (Learned the hard way)
+    will happen especially with old Bluetooth devices.
     */
     set_atomic_bool(&pl->looping, true);
     set_atomic_bool(&pl->playing, true);
@@ -35,7 +35,6 @@ tl_result player_exec(
         key_code key = NO_INPUT;
         get_input(&key);
         TRY(excv, process_input(pl, key), goto epilogue);
-        state_print(pl); // DEBUG.
 
         // Check for premature terminations.
         for (size_t i = 0; i < pl->active_threads; ++i) {
@@ -218,5 +217,6 @@ tl_result process_input(
         seek_length_s = 0.0;
         break;
     }
+    state_print(pl); 
     return excv;
 }

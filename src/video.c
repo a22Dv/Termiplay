@@ -25,7 +25,6 @@ static tl_result get_console_bounds(
 
 static tl_result get_con_frame(
     const raw_frame  *raw,
-    const raw_frame  *keyframe,
     const con_bounds *bounds,
     const double      ftime,
     const size_t      fnum,
@@ -49,26 +48,20 @@ tl_result vpthread_exec(thread_data *data) {
     size_t              frame_number = 0;
     static const size_t fbuffer_count = VBUFFER_BSIZE / sizeof(con_frame *);
 
-    raw_frame   *keyframe = malloc(sizeof(raw_frame));
     raw_frame   *staging_frame = malloc(sizeof(raw_frame));
     con_bounds  *bounds = malloc(sizeof(con_bounds));
     wchar_t     *wrk_buffer = malloc(MAXIMUM_BUFFER_SIZE);
     char        *compress_wbuffer = malloc(MAXIMUM_BUFFER_SIZE);
     const WCHAR *media_path = data->player->media_mtdta->media_path;
 
-    CHECK(excv, keyframe == NULL, TL_ALLOC_FAILURE, return excv);
     CHECK(excv, staging_frame == NULL, TL_ALLOC_FAILURE, return excv);
     CHECK(excv, bounds == NULL, TL_ALLOC_FAILURE, return excv);
     CHECK(excv, wrk_buffer == NULL, TL_ALLOC_FAILURE, return excv);
     CHECK(excv, compress_wbuffer == NULL, TL_ALLOC_FAILURE, return excv);
 
-    keyframe->data = malloc(MAXIMUM_BUFFER_SIZE);
     staging_frame->data = malloc(MAXIMUM_BUFFER_SIZE);
-    CHECK(excv, keyframe->data == NULL, TL_ALLOC_FAILURE, return excv);
     CHECK(excv, staging_frame->data == NULL, TL_ALLOC_FAILURE, return excv);
 
-    keyframe->flength = 0;
-    keyframe->fwidth = 0;
     staging_frame->flength = 0;
     staging_frame->fwidth = 0;
 
@@ -124,17 +117,12 @@ tl_result vpthread_exec(thread_data *data) {
             TRY(excv, get_raw_frame(ffmpeg_stream, bounds, &staging_frame), goto epilogue);
             TRY(excv,
                 get_con_frame(
-                    staging_frame, keyframe, bounds, frametime_start, frame_number, wrk_buffer,
+                    staging_frame, bounds, frametime_start, frame_number, wrk_buffer,
                     compress_wbuffer, &pl->video_rbuffer[get_atomic_size_t(&pl->vwrite_idx)]
                 ),
                 goto epilogue);
+            frame_number++;
             set_atomic_size_t(&pl->vwrite_idx, nwrite_idx);
-            memcpy(
-                keyframe->data, staging_frame->data,
-                staging_frame->flength * staging_frame->fwidth * sizeof(uint8_t)
-            );
-            keyframe->flength = staging_frame->flength;
-            keyframe->fwidth = staging_frame->fwidth;
         }
         if (feof(ffmpeg_stream)) {
             while (!get_atomic_bool(&pl->shutdown) &&
@@ -143,8 +131,6 @@ tl_result vpthread_exec(thread_data *data) {
             }
         }
         _pclose(ffmpeg_stream);
-        keyframe->flength = 0;
-        keyframe->fwidth = 0;
         ffmpeg_stream = NULL;
     }
 epilogue:
@@ -155,7 +141,6 @@ epilogue:
         ffmpeg_stream = NULL;
     }
     destroy_rawframe(&staging_frame);
-    destroy_rawframe(&keyframe);
     free(bounds);
     free(wrk_buffer);
     free(compress_wbuffer);
@@ -206,6 +191,7 @@ static tl_result get_raw_frame(
     size_t     px_ret = fread(out->data, sizeof(uint8_t), px_wdth * px_ln, ffmpeg_stream);
 
     /// BUG: End of video when 0 bytes not handled.
+    // Weirdly enough doesn't crash though. Just keep note.
     if (feof(ffmpeg_stream)) {
         rf->flength = 0;
         rf->fwidth = 0;
@@ -219,7 +205,6 @@ static tl_result get_raw_frame(
 
 static tl_result get_con_frame(
     const raw_frame  *raw,
-    const raw_frame  *keyframe,
     const con_bounds *bounds,
     const double      ftime,
     const size_t      fnum,
@@ -227,20 +212,11 @@ static tl_result get_con_frame(
     char             *comp_wbuffer,
     con_frame       **c_out
 ) {
-
     tl_result excv = TL_SUCCESS;
     CHECK(excv, raw == NULL, TL_NULL_ARG, return excv);
-    CHECK(excv, keyframe == NULL, TL_NULL_ARG, return excv);
     CHECK(excv, bounds == NULL, TL_NULL_ARG, return excv);
     CHECK(excv, c_out == NULL, TL_NULL_ARG, return excv);
     CHECK(excv, *c_out != NULL, TL_ALREADY_INITIALIZED, return excv);
-    bool no_keyframe = keyframe->flength == 0 && keyframe->fwidth == 0;
-    CHECK(
-        excv,
-        !no_keyframe && keyframe->flength != raw->flength ||
-            !no_keyframe && keyframe->fwidth != raw->fwidth,
-        TL_INVALID_ARG, return excv
-    );
     if (bounds->abs_conln * bounds->abs_conwdth * sizeof(wchar_t) > MAXIMUM_BUFFER_SIZE ||
         LZ4_compressBound((int)(bounds->cell_ln * bounds->cell_wdth)) > MAXIMUM_BUFFER_SIZE) {
         // Unsupported resolution. `vcthread` will process NULL `con_frame*`s as empty frames.
@@ -296,8 +272,7 @@ static tl_result get_con_frame(
     CHECK(excv, lz4_compressed_size == 0, TL_COMPRESS_ERR, goto epilogue);
     cframe->compressed_bsize = (size_t)lz4_compressed_size;
     cframe->compressed_data = malloc(cframe->compressed_bsize);
-    cframe->fnum_since_prod = fnum;
-    cframe->prod_timestamp = ftime;
+    cframe->pts = ftime + (fnum * (1 / (double)V_FPS));
     memcpy(cframe->compressed_data, comp_wbuffer, cframe->compressed_bsize);
 
 epilogue:
@@ -321,7 +296,6 @@ static tl_result get_console_bounds(
 
     con_bounds *b = *out;
 
-    // Get the full console window size in character cells.
     b->cell_ln = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
     b->cell_wdth = csbi.srWindow.Right - csbi.srWindow.Left + 1;
     b->abs_conln = b->cell_ln;
@@ -330,10 +304,9 @@ static tl_result get_console_bounds(
     const double char_pixel_aspect = (double)BRAILLE_CHAR_DOT_WDTH / (double)BRAILLE_CHAR_DOT_LN;
     const double con_pixel_aspect = ((double)b->cell_wdth / (double)b->cell_ln) * char_pixel_aspect;
     const double v_aspect = (double)mtdta->width / (double)mtdta->height;
-    
-   
+
     if (v_aspect > con_pixel_aspect) {
-         // Video wider than console.
+        // Video wider than console.
         b->cell_ln = (size_t)(((double)b->cell_wdth * char_pixel_aspect) / v_aspect);
     } else {
         // Video narrower than console.
@@ -349,7 +322,7 @@ static tl_result get_console_bounds(
     }
     b->log_ln = b->cell_ln * BRAILLE_CHAR_DOT_LN;
     b->log_wdth = b->cell_wdth * BRAILLE_CHAR_DOT_WDTH;
-    
+
     // Center the output frame in the console window
     b->start_row = (b->abs_conln - b->cell_ln) / 2;
     b->start_col = (b->abs_conwdth - b->cell_wdth) / 2;
@@ -404,6 +377,7 @@ tl_result vcthread_exec(thread_data *data) {
             if (get_atomic_size_t(&pl->serial) != set_serial) {
                 continue;
             }
+            clear_screen(stdouth);
         }
         if (!playback) {
             Sleep(10);
@@ -424,31 +398,34 @@ tl_result vcthread_exec(thread_data *data) {
             Sleep(5);
             continue;
         }
-        if (conbuf == NULL || fbuf[vread]->flength != conbuf_size.Y ||
-            fbuf[vread]->fwidth != conbuf_size.X) {
+
+        // We need to take ownership of frame
+        const con_frame *frame = _InterlockedExchangePointer((PVOID volatile *)&fbuf[vread], NULL);
+        if (conbuf == NULL || frame->flength != conbuf_size.Y || frame->fwidth != conbuf_size.X) {
             free(conbuf);
-            conbuf = calloc(fbuf[vread]->flength * fbuf[vread]->fwidth, sizeof(CHAR_INFO));
+            conbuf = malloc(frame->flength * frame->fwidth * sizeof(CHAR_INFO));
             CHECK(excv, conbuf == NULL, TL_ALLOC_FAILURE, goto epilogue);
-            conbuf_size.X = (SHORT)fbuf[vread]->fwidth;
-            conbuf_size.Y = (SHORT)fbuf[vread]->flength;
+            conbuf_size.X = (SHORT)frame->fwidth;
+            conbuf_size.Y = (SHORT)frame->flength;
+            write_region.Left = (SHORT)frame->x_start;
+            write_region.Top = (SHORT)frame->y_start;
+            write_region.Right = (SHORT)(frame->x_start + frame->fwidth - 1);
+            write_region.Bottom = (SHORT)(frame->y_start + frame->flength - 1);
         }
-        const con_frame *frame = fbuf[vread];
-        const double     pts = frame->prod_timestamp + ((double)1 / V_FPS) * frame->fnum_since_prod;
+
+        const double pts = frame->pts;
         AcquireSRWLockShared(&pl->srw_mclock);
         const double clock = get_atomic_double(&pl->main_clock);
         ReleaseSRWLockShared(&pl->srw_mclock);
         const double drift = clock - pts;
 
-        // Frame skip.
-        // if (drift > 1) {
-        //     destroy_conframe(&fbuf[vread]);
-        //     set_atomic_size_t(&pl->vread_idx, nvread);
-        //     continue;
-        // }
-        // Ahead.
-        if (clock - pts < -(double)2 / V_FPS) {
-            Sleep((DWORD)((-drift) * 1000.0));
+        if (drift > 1.0) {
+            destroy_conframe(&frame);
+            set_atomic_size_t(&pl->vread_idx, nvread);
             continue;
+        }
+        if (drift < -(1 / (double)V_FPS)) {
+            Sleep((DWORD)(-drift * 1000.0));
         }
         int lz4_dret = LZ4_decompress_fast(
             frame->compressed_data, (char *)uncomp_fbuffer, (int)frame->uncompressed_bsize
@@ -458,23 +435,19 @@ tl_result vcthread_exec(thread_data *data) {
         const size_t tchars = frame->flength * frame->fwidth;
         for (size_t i = 0; i < tchars; ++i) {
             conbuf[i].Char.UnicodeChar = uncomp_fbuffer[i];
+            conbuf[i].Attributes = 0; // Clear garbage data from malloc().
             conbuf[i].Attributes |= FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
             conbuf[i].Attributes &= ~(BACKGROUND_BLUE | BACKGROUND_GREEN | BACKGROUND_RED);
         }
-        write_region.Left = (SHORT)fbuf[vread]->x_start;
-        write_region.Top = (SHORT)fbuf[vread]->y_start;
-        write_region.Right = (SHORT)(fbuf[vread]->x_start + fbuf[vread]->fwidth - 1);
-        write_region.Bottom = (SHORT)(fbuf[vread]->y_start + fbuf[vread]->flength - 1);
         CHECK(
             excv, !WriteConsoleOutputW(stdouth, conbuf, conbuf_size, hm, &write_region),
             TL_CONSOLE_ERR, goto epilogue
         );
-        Sleep(33);
-        destroy_conframe(&fbuf[vread]);
+        destroy_conframe(&frame);
         set_atomic_size_t(&pl->vread_idx, nvread);
     }
 epilogue:
-    DWORD err = GetLastError();
+    clear_screen(stdouth);
     free(conbuf);
     free(uncomp_fbuffer);
     return excv;

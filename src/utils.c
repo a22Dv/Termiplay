@@ -419,20 +419,20 @@ void state_print(player *pl) {
     SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), c);
     fprintf(
         stdout,
-        "SHUTDOWN: %s\n"
-        "PLAYING: %s\n"
-        "LOOPING: %s\n"
-        "INVALIDATED: %s\n"
-        "MUTED: %s\n"
-        "MAIN_CLOCK: %lf\n"
-        "VOLUME: %lf\n"
-        "SEEK_SPEED: %lf\n"
-        "SERIAL: %zu\n"
-        "AREAD_IDX: %zu\n"
-        "AWRITE_IDX: %zu\n"
-        "VREAD_IDX: %zu\n"
-        "VWRITE_IDX: %zu\n"
-        "ACTIVE_THREADS: %u\n",
+        "SHUTDOWN: %s \n"
+        "PLAYING: %s \n"
+        "LOOPING: %s \n"
+        "INVALIDATED: %s \n"
+        "MUTED: %s \n"
+        "MAIN_CLOCK: %lf \n"
+        "VOLUME: %lf \n"
+        "SEEK_SPEED: %lf \n"
+        "SERIAL: %zu \n"
+        "AREAD_IDX: %zu \n"
+        "AWRITE_IDX: %zu \n"
+        "VREAD_IDX: %zu \n"
+        "VWRITE_IDX: %zu \n"
+        "ACTIVE_THREADS: %u \n",
         get_atomic_bool(&pl->shutdown) ? " TRUE" : "FALSE",
         get_atomic_bool(&pl->playing) ? " TRUE" : "FALSE",
         get_atomic_bool(&pl->looping) ? " TRUE" : "FALSE",
