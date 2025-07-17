@@ -76,6 +76,12 @@ void get_input(key_code *kc) {
         case 'q':
             *kc = Q;
             break;
+        case 'g':
+            *kc = G;
+            break;
+        case 'd':
+            *kc = D;
+            break;
         default:
             *kc = NO_INPUT;
             break;
@@ -144,7 +150,8 @@ tl_result process_input(
 
     AcquireSRWLockExclusive(&pl->srw_mclock);
 
-    // We can't seek beyond the end without possibly raising errors, so we cut it a bit short (~50ms)
+    // We can't seek beyond the end without possibly raising errors, so we cut it a bit short
+    // (~50ms)
     if (get_atomic_double(&pl->main_clock) > pl->media_mtdta->duration - POLLING_RATE_S) {
         if (get_atomic_bool(&pl->looping)) {
             set_atomic_bool(&pl->invalidated, true);
@@ -211,12 +218,25 @@ tl_result process_input(
         ReleaseSRWLockExclusive(&pl->srw_mclock);
         seek_length_s += POLLING_RATE_S;
         break;
+    case G:
+        flip_atomic_bool(&pl->debug_print);
+        break;
+    case D:
+        const size_t cmode = get_atomic_size_t(&pl->dither_mode);
+        if (cmode == DTH_MODES - 1) {
+            set_atomic_size_t(&pl->dither_mode, 0);
+        } else {
+            add_atomic_size_t(&pl->dither_mode, 1);
+        }
+        break;
     case NO_INPUT:
         set_atomic_double(&pl->seek_speed, 0.0);
         set_atomic_bool(&pl->invalidated, false);
         seek_length_s = 0.0;
         break;
     }
-    state_print(pl); 
+    if (get_atomic_bool(&pl->debug_print)) {
+        state_print(pl);
+    }
     return excv;
 }

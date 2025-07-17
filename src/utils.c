@@ -240,6 +240,7 @@ tl_result create_player(
     set_atomic_bool(&pl->looping, false);
     set_atomic_bool(&pl->invalidated, false);
     set_atomic_bool(&pl->muted, false);
+    set_atomic_bool(&pl->debug_print, false);
     set_atomic_double(&pl->main_clock, 0.0);
     set_atomic_double(&pl->volume, 0.0);
     set_atomic_double(&pl->seek_speed, 0.0);
@@ -248,6 +249,8 @@ tl_result create_player(
     set_atomic_size_t(&pl->awrite_idx, 0);
     set_atomic_size_t(&pl->vwrite_idx, 0);
     set_atomic_size_t(&pl->vread_idx, 0);
+    set_atomic_size_t(&pl->dither_mode, 1); // Floyd-Steinberg default.
+    set_atomic_size_t(&pl->ext_assets_ptr, 0);
     InitializeSRWLock(&pl->srw_mclock);
     pl->active_threads = 0;
 
@@ -385,7 +388,10 @@ void destroy_player(player **pl_ptr) {
             destroy_conframe(&(*pl_ptr)->video_rbuffer[i]);
         }
     }
-
+    void *extasst = _InterlockedExchangePointer(
+        (volatile PVOID *)&((*pl_ptr)->ext_assets_ptr), NULL
+    );
+    free(extasst);
     free((*pl_ptr)->video_rbuffer);
     free((*pl_ptr)->audio_rbuffer);
     destroy_media_mtdta(&(*pl_ptr)->media_mtdta);
@@ -432,7 +438,8 @@ void state_print(player *pl) {
         "AWRITE_IDX: %zu \n"
         "VREAD_IDX: %zu \n"
         "VWRITE_IDX: %zu \n"
-        "ACTIVE_THREADS: %u \n",
+        "ACTIVE_THREADS: %u \n"
+        "DITHER_MODE: %u \n",
         get_atomic_bool(&pl->shutdown) ? " TRUE" : "FALSE",
         get_atomic_bool(&pl->playing) ? " TRUE" : "FALSE",
         get_atomic_bool(&pl->looping) ? " TRUE" : "FALSE",
@@ -441,6 +448,7 @@ void state_print(player *pl) {
         get_atomic_double(&pl->seek_speed), get_atomic_size_t(&pl->serial),
         get_atomic_size_t(&pl->aread_idx), get_atomic_size_t(&pl->awrite_idx),
         get_atomic_size_t(&pl->vread_idx), get_atomic_size_t(&pl->vwrite_idx),
-        (uint32_t)pl->active_threads
+        (uint32_t)pl->active_threads, (uint32_t)pl->dither_mode
+
     );
 }

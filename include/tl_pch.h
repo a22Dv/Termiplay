@@ -4,6 +4,7 @@
 #define NOMINMAX // Makes sure Windows.h doesn't define MIN() & MAX() macros.
 #include <Windows.h>
 #include <shellapi.h>
+#include <PathCch.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stddef.h>

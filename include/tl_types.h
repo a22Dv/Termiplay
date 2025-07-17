@@ -90,10 +90,19 @@ typedef enum key_code {
     ARR_RIGHT, // Seek backward.
     M,         // Mute.
     G,         // Debug print.
-    D,         // Switch through dithering modes. 0 NONE | 1 FLYD-STBRG | 2 BAYER | 3 HALFTONE
-    Q          // Shutdown.
+    D, // Switch through dithering modes. 0 THRESHOLDING | 1 FLYD-STBRG | 2 BAYER | 3 HALFTONE | 4
+       // BLUE
+    Q  // Shutdown.
 } key_code;
 
+typedef enum dither_mode {
+    DTH_THRESHOLDING,
+    DTH_FLOYD_STEINBERG,
+    DTH_BAYER_2X2,
+    DTH_HALFTONE,
+    DTH_BLUE,
+    DTH_MODES
+} dither_mode;
 /// @brief Media metadata.
 typedef struct media_mtdta {
     WCHAR *media_path;
@@ -131,14 +140,17 @@ typedef struct player {
     atomic_bool_t   looping;
     atomic_bool_t   invalidated; // Any disruptive operation. (Seeking, console resizing)
     atomic_bool_t   muted;
+    atomic_bool_t   debug_print;
     atomic_double_t main_clock;
     atomic_double_t volume;
     atomic_double_t seek_speed;
+    atomic_size_t   dither_mode;
     atomic_size_t   serial; // Data versioning.
     atomic_size_t   aread_idx;
     atomic_size_t   awrite_idx;
     atomic_size_t   vread_idx;
     atomic_size_t   vwrite_idx;
+    atomic_size_t   ext_assets_ptr; // Extra data such as textures for dithering.
     DWORD           active_threads;
     HANDLE         *th_hndles; // Use with `th_handles`.
     HANDLE         *ev_hndles; // Use with `ev_handles`.

@@ -24,16 +24,24 @@ static tl_result get_console_bounds(
 );
 
 static tl_result get_con_frame(
-    const raw_frame  *raw,
     const con_bounds *bounds,
     const double      ftime,
     const size_t      fnum,
+    const dither_mode dmode,
+    void            **ext_data,
     wchar_t          *wrk_buffer,
     char             *comp_wbuffer,
+    raw_frame        *raw,
     con_frame       **c_out
 );
 
 static wchar_t map_to_braille(uint8_t *map);
+
+static tl_result apply_dither(
+    void            **ext_data,
+    const dither_mode dmode,
+    raw_frame        *rframe
+);
 
 static tl_result clear_screen(HANDLE stdouth);
 
@@ -115,10 +123,14 @@ tl_result vpthread_exec(thread_data *data) {
                 break;
             }
             TRY(excv, get_raw_frame(ffmpeg_stream, bounds, &staging_frame), goto epilogue);
+            if (staging_frame->flength == 0 && staging_frame->fwidth == 0) {
+                break;
+            }
             TRY(excv,
                 get_con_frame(
-                    staging_frame, bounds, frametime_start, frame_number, wrk_buffer,
-                    compress_wbuffer, &pl->video_rbuffer[get_atomic_size_t(&pl->vwrite_idx)]
+                    bounds, frametime_start, frame_number, get_atomic_size_t(&pl->dither_mode),
+                    (void **)&(pl->ext_assets_ptr), wrk_buffer, compress_wbuffer, staging_frame,
+                    &pl->video_rbuffer[get_atomic_size_t(&pl->vwrite_idx)]
                 ),
                 goto epilogue);
             frame_number++;
@@ -190,13 +202,14 @@ static tl_result get_raw_frame(
     raw_frame *out = *f_out;
     size_t     px_ret = fread(out->data, sizeof(uint8_t), px_wdth * px_ln, ffmpeg_stream);
 
-    /// BUG: End of video when 0 bytes not handled.
+    // End of video when 0 bytes not handled.
     // Weirdly enough doesn't crash though. Just keep note.
     if (feof(ffmpeg_stream)) {
         rf->flength = 0;
         rf->fwidth = 0;
         return excv;
     }
+
     CHECK(excv, px_ret != px_wdth * px_ln, TL_INCOMPLETE_DATA, return excv);
     out->flength = px_ln;
     out->fwidth = px_wdth;
@@ -204,12 +217,14 @@ static tl_result get_raw_frame(
 }
 
 static tl_result get_con_frame(
-    const raw_frame  *raw,
     const con_bounds *bounds,
     const double      ftime,
     const size_t      fnum,
+    const dither_mode dmode,
+    void            **ext_data,
     wchar_t          *wrk_buffer,
     char             *comp_wbuffer,
+    raw_frame        *raw,
     con_frame       **c_out
 ) {
     tl_result excv = TL_SUCCESS;
@@ -233,6 +248,7 @@ static tl_result get_con_frame(
 
     // INSERT HERE:
     // TODO: Floyd-Steinberg dithering. Edit raw_frame* raw before passing to braille converter.
+    TRY(excv, apply_dither(ext_data, dmode, raw), goto epilogue);
 
     const size_t total_chars = cframe->flength * cframe->fwidth;
     const size_t alignment_matrix[BRAILLE_DOTS_PER_CHAR] = {
@@ -342,28 +358,39 @@ static wchar_t map_to_braille(uint8_t *map) {
 }
 
 tl_result vcthread_exec(thread_data *data) {
-    tl_result           excv = TL_SUCCESS;
-    player             *pl = data->player;
-    size_t              set_serial = 0;
     static const size_t vbuffer_frames = VBUFFER_BSIZE / sizeof(con_frame *);
-    con_frame         **fbuf = pl->video_rbuffer;
+    static const COORD  hm = {.X = 0, .Y = 0};
+
+    tl_result   excv = TL_SUCCESS;
+    player     *pl = data->player;
+    size_t      set_serial = 0;
+    bool        debug_print = false;
+    con_frame **fbuf = pl->video_rbuffer;
 
     CHAR_INFO *conbuf = NULL;
     SMALL_RECT write_region = {.Bottom = 0, .Left = 0, .Right = 0, .Top = 0};
     COORD      conbuf_size = {.X = 0, .Y = 0};
     HANDLE     stdouth = GetStdHandle(STD_OUTPUT_HANDLE);
     CHECK(excv, stdouth == NULL || stdouth == INVALID_HANDLE_VALUE, TL_OS_ERR, return excv);
-    const COORD hm = {.X = 0, .Y = 0};
-    wchar_t    *uncomp_fbuffer = malloc(MAXIMUM_BUFFER_SIZE);
+
+    wchar_t *uncomp_fbuffer = malloc(MAXIMUM_BUFFER_SIZE);
     CHECK(excv, uncomp_fbuffer == NULL, TL_ALLOC_FAILURE, return excv);
 
     while (true) {
         const bool   shutdown = get_atomic_bool(&pl->shutdown);
         const bool   playback = get_atomic_bool(&pl->playing);
         const size_t cserial = get_atomic_size_t(&pl->serial);
+        const bool   ndebug_print = get_atomic_bool(&pl->debug_print);
         if (shutdown) {
             break;
         }
+
+        // Just quickly clears left behind status prints.
+        if (!ndebug_print && debug_print) {
+            TRY(excv, clear_screen(stdouth), goto epilogue);
+        }
+        debug_print = ndebug_print;
+
         if (cserial != set_serial) {
             set_serial = cserial;
 
@@ -377,7 +404,8 @@ tl_result vcthread_exec(thread_data *data) {
             if (get_atomic_size_t(&pl->serial) != set_serial) {
                 continue;
             }
-            clear_screen(stdouth);
+            // Removes left-behind artifacts upon resizing.
+            TRY(excv, clear_screen(stdouth), goto epilogue);
         }
         if (!playback) {
             Sleep(10);
@@ -401,6 +429,7 @@ tl_result vcthread_exec(thread_data *data) {
 
         // We need to take ownership of frame
         const con_frame *frame = _InterlockedExchangePointer((PVOID volatile *)&fbuf[vread], NULL);
+        const size_t     tchars = frame->flength * frame->fwidth;
         if (conbuf == NULL || frame->flength != conbuf_size.Y || frame->fwidth != conbuf_size.X) {
             free(conbuf);
             conbuf = malloc(frame->flength * frame->fwidth * sizeof(CHAR_INFO));
@@ -411,6 +440,11 @@ tl_result vcthread_exec(thread_data *data) {
             write_region.Top = (SHORT)frame->y_start;
             write_region.Right = (SHORT)(frame->x_start + frame->fwidth - 1);
             write_region.Bottom = (SHORT)(frame->y_start + frame->flength - 1);
+            for (size_t i = 0; i < tchars; ++i) {
+                conbuf[i].Attributes = 0; // Clear garbage data from malloc().
+                conbuf[i].Attributes |= FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+                conbuf[i].Attributes &= ~(BACKGROUND_BLUE | BACKGROUND_GREEN | BACKGROUND_RED);
+            }
         }
 
         const double pts = frame->pts;
@@ -425,19 +459,15 @@ tl_result vcthread_exec(thread_data *data) {
             continue;
         }
         if (drift < -(1 / (double)V_FPS)) {
+            // -drift to turn it positive again.
             Sleep((DWORD)(-drift * 1000.0));
         }
         int lz4_dret = LZ4_decompress_fast(
             frame->compressed_data, (char *)uncomp_fbuffer, (int)frame->uncompressed_bsize
         );
         CHECK(excv, lz4_dret == 0, TL_COMPRESS_ERR, goto epilogue);
-
-        const size_t tchars = frame->flength * frame->fwidth;
         for (size_t i = 0; i < tchars; ++i) {
             conbuf[i].Char.UnicodeChar = uncomp_fbuffer[i];
-            conbuf[i].Attributes = 0; // Clear garbage data from malloc().
-            conbuf[i].Attributes |= FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
-            conbuf[i].Attributes &= ~(BACKGROUND_BLUE | BACKGROUND_GREEN | BACKGROUND_RED);
         }
         CHECK(
             excv, !WriteConsoleOutputW(stdouth, conbuf, conbuf_size, hm, &write_region),
@@ -470,5 +500,136 @@ static tl_result clear_screen(HANDLE stdouth) {
         TL_CONSOLE_ERR, return excv
     );
     CHECK(excv, !SetConsoleCursorPosition(stdouth, hm), TL_CONSOLE_ERR, return excv);
+    return excv;
+}
+
+static tl_result threshold(
+    void     **ext_data,
+    raw_frame *rf
+) {
+    // No-op. Thresholding is handled by the converter.
+    return TL_SUCCESS;
+}
+
+static tl_result flyd_stnbrg(
+    void     **ext_data,
+    raw_frame *rf
+) {
+
+    return threshold(ext_data, rf);
+}
+
+static tl_result bayer_2x2(
+    void     **ext_data,
+    raw_frame *rf
+) {
+    return threshold(ext_data, rf);
+}
+
+static tl_result blue_dth(
+    void     **ext_data,
+    raw_frame *rf
+) {
+    WCHAR               exec_path[MAX_PATH];
+    WCHAR               ftexture_pth[MAX_PATH];
+    static const WCHAR *btexture_pth = L"assets\\bnoise.raw";
+    static const size_t btexture_length = 8192;
+    static const size_t btexture_width = 8192;
+    static bool         reload = true;
+    static size_t       set_length = 0;
+    static size_t       set_width = 0;
+    tl_result           excv = TL_SUCCESS;
+    FILE               *data = NULL;
+    uint8_t *texture = NULL;
+    CHECK(
+        excv,
+        rf->flength == 0 || rf->fwidth == 0 || rf->flength > btexture_length ||
+            rf->fwidth > btexture_width,
+        TL_INVALID_ARG, goto epilogue
+    );
+    CHECK(excv, ext_data == NULL, TL_NULL_ARG, return excv);
+    if (set_length != rf->flength || set_width != rf->fwidth) {
+        set_length = rf->flength;
+        set_width = rf->fwidth;
+        reload = true;
+    }
+    if (reload) {
+        DWORD get_exec = GetModuleFileNameW(NULL, exec_path, MAX_PATH);
+        CHECK(excv, get_exec >= MAX_PATH || get_exec == 0, TL_OS_ERR, goto epilogue);
+        HRESULT hr_remove = PathCchRemoveFileSpec(exec_path, MAX_PATH);
+        CHECK(excv, !SUCCEEDED(hr_remove), TL_OS_ERR, goto epilogue);
+        HRESULT hr_combine = PathCchCombine(ftexture_pth, MAX_PATH, exec_path, btexture_pth);
+        CHECK(excv, !SUCCEEDED(hr_combine), TL_OS_ERR, goto epilogue);
+        DWORD fattr = GetFileAttributesW(ftexture_pth);
+        CHECK(excv, fattr == INVALID_FILE_ATTRIBUTES, TL_DEP_NOT_FOUND, goto epilogue);
+
+        free(_InterlockedExchangePointer((volatile PVOID *)ext_data, NULL));
+        texture = malloc(rf->flength * rf->fwidth * sizeof(uint8_t));
+        CHECK(excv, texture == NULL, TL_ALLOC_FAILURE, goto epilogue);
+        errno_t data_open = _wfopen_s(&data, ftexture_pth, L"rb");
+        CHECK(excv, data == NULL || data_open != 0, TL_PIPE_CREATION_FAILURE, goto epilogue);
+        const size_t bskip = (btexture_width - rf->fwidth) * sizeof(uint8_t);
+        for (size_t i = 0; i < set_length; ++i) {
+            size_t fret = fread(texture + (i * rf->fwidth), sizeof(uint8_t), rf->fwidth, data);
+            CHECK(excv, fret != rf->fwidth, TL_PIPE_READ_FAILURE, goto epilogue);
+            if (bskip > 0) {
+                int fret_discard = fseek(data, (long)bskip, SEEK_CUR);
+                CHECK(excv, fret_discard != 0, TL_PIPE_READ_FAILURE, goto epilogue);
+            }
+        }
+        int exret = fclose(data);
+        data = NULL;
+        CHECK(excv, exret != 0, TL_PIPE_PROC_FAILURE, goto epilogue);
+        _InterlockedExchangePointer((volatile PVOID *)ext_data, (PVOID)texture);
+        reload = false;
+    }
+    const size_t total_px =  set_length * set_width;
+    uint8_t* frame_data = rf->data;
+
+    // Comparison.
+    for (size_t i = 0; i < total_px; ++i) {
+        if (frame_data[i] > ((uint8_t*)(*ext_data))[i]) {
+            frame_data[i] = UINT8_MAX;
+        } else {
+            frame_data[i] = 0;
+        }
+    }
+epilogue:
+    if (excv != TL_SUCCESS) {
+        if (data) {
+            fclose(data);
+            data = NULL;
+        }
+        free(texture);
+    }
+    return excv;
+}
+
+static tl_result halftone(
+    void     **ext_data,
+    raw_frame *rf
+) {
+    return threshold(ext_data, rf);
+}
+
+static tl_result apply_dither(
+    void            **ext_data,
+    const dither_mode dmode,
+    raw_frame        *rframe
+) {
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, dmode < 0 || dmode > DTH_MODES, TL_INVALID_ARG, return excv);
+    CHECK(excv, rframe == NULL, TL_NULL_ARG, return excv);
+    static bool setup = true;
+    static tl_result (*(dither_funcs[DTH_MODES]))(void **ext_data, raw_frame *);
+    if (setup) {
+        dither_funcs[DTH_THRESHOLDING] = threshold;
+        dither_funcs[DTH_FLOYD_STEINBERG] = flyd_stnbrg;
+        dither_funcs[DTH_BAYER_2X2] = bayer_2x2;
+        dither_funcs[DTH_BLUE] = blue_dth;
+        dither_funcs[DTH_HALFTONE] = halftone;
+        setup = false;
+    }
+    TRY(excv, dither_funcs[dmode](ext_data, rframe), return excv);
     return excv;
 }

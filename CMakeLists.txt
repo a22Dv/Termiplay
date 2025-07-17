@@ -19,4 +19,5 @@ target_compile_options(termiplay PRIVATE /W4 /WX
 target_include_directories(termiplay PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(termiplay PRIVATE shell32)
 target_link_libraries(termiplay PRIVATE lz4::lz4)
+target_link_libraries(termiplay PRIVATE Pathcch)
 
