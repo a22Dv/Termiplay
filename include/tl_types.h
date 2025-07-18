@@ -66,6 +66,9 @@ typedef int16_t         s16_le;
 #define BRAILLE_DOTS_PER_CHAR 8
 #define BAYER_4X4_MATRIX_SIZE 16
 #define FLOYD_STEINBERG_KERNEL_SIZE 4
+#define HALFTONE_MATRIX_SIZE 16
+#define SIERRA_LITE_KERNEL_SIZE 2
+#define DTH_BLUE_MODES 4
 
 /// @brief Handle index.
 /// @note Order is crucial to WaitForMultipleObjects(). Do not touch.
@@ -82,6 +85,7 @@ typedef enum ev_handles {
     VIDEO_PROD_EVENT_WAKE_HNDLE,
 } ev_handles;
 
+/// @brief Key codes.
 typedef enum key_code {
     NO_INPUT,
     SPACE,     // Play/Pause.
@@ -92,17 +96,18 @@ typedef enum key_code {
     ARR_RIGHT, // Seek backward.
     M,         // Mute.
     G,         // Debug print.
-    D, // Switch through dithering modes. 0 THRESHOLDING | 1 FLYD-STBRG | 2 BAYER | 3 HALFTONE | 4
-       // BLUE
-    Q  // Shutdown.
+    D,         // Switch dithering modes.
+    Q          // Shutdown.
 } key_code;
 
+/// @brief Dithering modes.
 typedef enum dither_mode {
-    DTH_THRESHOLDING,
-    DTH_FLOYD_STEINBERG,
+    DTH_BLUE,
+    DTH_SIERRA_LITE,
     DTH_BAYER_4X4,
     DTH_HALFTONE,
-    DTH_BLUE,
+    DTH_FLOYD_STEINBERG,
+    DTH_THRESHOLDING,
     DTH_MODES
 } dither_mode;
 

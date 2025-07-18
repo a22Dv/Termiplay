@@ -5,15 +5,14 @@
 #include "tl_utils.h"
 #include "tl_video.h"
 
-
 /// TODO: ALREADY INITIALIZED bug whenever frames take way too long.
 /// Finish Halftone algorithm, if time permits use a frame pool instead.
 /// Take all pointer acquisitions and use InterlockedExchangePointer instead.
 /// to eliminate race condition bugs in the buffer. Limit frame buffer size to
 /// 15 to increase responsiveness to stylistic changes.
-/// Add Sierra-Lite error diffusion algorithm
-/// Add 3 additional rotated copies for a total of 4 of the texture 
-/// to prevent static dots at runtime for Blue noiseq dithering.
+/// Add Sierra-Lite error diffuseusion algorithm
+/// Change access and entry point every frame
+/// to prevent static dots at runtime for Blue noise dithering.
 
 static tl_result get_new_ffmpeg_instance(
     const double      clock_start,
@@ -525,12 +524,12 @@ static tl_result flyd_stnbrg(
     void     **_ext_data,
     raw_frame *rf
 ) {
-    /// BUG: Fix `ALREADY INITIALIZED` non-NULL pointer frame bug when frame time takes way too long. 
-    /// Possibly acquisition race conditions. Fix with InterlockedPointerExchange.
-    /// Double check index calculations.
-    
+    /// BUG: Fix `ALREADY INITIALIZED` non-NULL pointer frame bug when frame time takes way too
+    /// long. Possibly acquisition race conditions. Fix with InterlockedPointerExchange. Double
+    /// check index calculations.
+
     // Holy performance hog. This can crash the entire thing if each frame takes way too long.
-    // though that might also be attributed to crappier architecture. 
+    // though that might also be attributed to crappier architecture.
 
     tl_result excv = TL_SUCCESS;
     CHECK(excv, rf == NULL, TL_NULL_ARG, return excv);
@@ -540,10 +539,9 @@ static tl_result flyd_stnbrg(
     static size_t idxs[FLOYD_STEINBERG_KERNEL_SIZE] = {0, 0, 0, 0};
     static bool   is_valid[FLOYD_STEINBERG_KERNEL_SIZE] = {false, false, false, false};
     size_t        cidx = 0;
-    uint8_t          value;
+    uint8_t       value;
     float         delta = 0.0;
     float         diffuse = 0.0;
-
 
     for (size_t y = 0; y < rf->flength; ++y) {
         for (size_t x = 0; x < rf->fwidth; ++x) {
@@ -618,12 +616,13 @@ static tl_result blue_dth(
     static bool         reload = true;
     static size_t       set_length = 0;
     static size_t       set_width = 0;
-
-    tl_result excv = TL_SUCCESS;
-    WCHAR     exec_path[MAX_PATH];
-    WCHAR     ftexture_pth[MAX_PATH];
-    FILE     *data = NULL;
-    uint8_t  *texture = NULL;
+    static size_t       fcount = 0;
+    static const size_t threshold[DTH_BLUE_MODES] = {V_FPS - 8, V_FPS - 15, V_FPS - 23, 0};
+    tl_result           excv = TL_SUCCESS;
+    WCHAR               exec_path[MAX_PATH];
+    WCHAR               ftexture_pth[MAX_PATH];
+    FILE               *data = NULL;
+    uint8_t            *texture = NULL;
     CHECK(
         excv,
         rf->flength == 0 || rf->fwidth == 0 || rf->flength > btexture_length ||
@@ -667,17 +666,38 @@ static tl_result blue_dth(
         _InterlockedExchangePointer((volatile PVOID *)ext_data, (PVOID)texture);
         reload = false;
     }
-    const size_t total_px = set_length * set_width;
+    const size_t mod_fps = fcount % V_FPS;
     uint8_t     *frame_data = rf->data;
-
-    // Comparison.
-    for (size_t i = 0; i < total_px; ++i) {
-        if (frame_data[i] > ((uint8_t *)(*ext_data))[i]) {
-            frame_data[i] = UINT8_MAX;
-        } else {
-            frame_data[i] = 0;
+    size_t       mode = 0;
+    for (size_t i = 0; i < DTH_BLUE_MODES; ++i) {
+        if (threshold[i] > mod_fps) {
+            mode++;
+            continue;
         }
+        break;
     }
+    const size_t total_px = set_length * set_width;
+    const size_t start_idx[DTH_BLUE_MODES] = {
+        0, total_px - 1, rf->fwidth - 1, total_px - rf->fwidth
+    };
+    const size_t access_column[DTH_BLUE_MODES] = {0, 0, 2 * rf->fwidth, -2 * rf->fwidth};
+    const int8_t access_width[DTH_BLUE_MODES] = {1, -1, -1, 1};
+
+    size_t fidx = 0;
+    size_t txt_idx = start_idx[mode];
+    for (size_t y = 0; y < rf->flength; ++y) {
+        for (size_t x = 0; x < rf->fwidth; ++x) {
+            fidx = y * rf->fwidth + x;
+            if (frame_data[fidx] > ((uint8_t *)(*ext_data))[txt_idx]) {
+                frame_data[fidx] = UINT8_MAX;
+            } else {
+                frame_data[fidx] = 0;
+            }
+            txt_idx += access_width[mode];
+        }
+        txt_idx += access_column[mode];
+    }
+    fcount++;
 epilogue:
     if (excv != TL_SUCCESS) {
         if (data) {
@@ -693,7 +713,76 @@ static tl_result halftone(
     void     **ext_data,
     raw_frame *rf
 ) {
-    return threshold(ext_data, rf);
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, rf == NULL, TL_NULL_ARG, return excv);
+
+    // We use a spiral pattern dither here, with the lowest threshold
+    // set to 1 instead of 0 to preserve deep blacks.
+    static const uint8_t matrix[HALFTONE_MATRIX_SIZE] = {
+        (uint8_t)(255 * 10 / (double)16), (uint8_t)(255 * 9 / (double)16),
+        (uint8_t)(255 * 8 / (double)16),  (uint8_t)(255 * 7 / (double)16),
+        (uint8_t)(255 * 11 / (double)16), (uint8_t)(255 * 16 / (double)16),
+        (uint8_t)(255 * 15 / (double)16), (uint8_t)(255 * 6 / (double)16),
+        (uint8_t)(255 * 12 / (double)16), (uint8_t)(255 * 13 / (double)16),
+        (uint8_t)(255 * 14 / (double)16), (uint8_t)(255 * 5 / (double)16),
+        (uint8_t)(255 * 1 / (double)16),  (uint8_t)(255 * 2 / (double)16),
+        (uint8_t)(255 * 3 / (double)16),  (uint8_t)(255 * 4 / (double)16)
+    };
+    uint8_t  threshold_idx = 0;
+    size_t   data_idx = 0;
+    uint8_t *data = rf->data;
+    for (size_t y = 0; y < rf->flength; ++y) {
+        for (size_t x = 0; x < rf->fwidth; ++x) {
+            data_idx = y * rf->fwidth + x;
+            threshold_idx = ((y & 3) << 2) | (x & 3);
+            data[data_idx] = matrix[threshold_idx] > data[data_idx] ? 0 : 255;
+        }
+    }
+    return TL_SUCCESS;
+}
+
+/// @brief A modified version of Sierra Lite.
+static tl_result sierra_lite(
+    void     **_ext_data,
+    raw_frame *rf
+) {
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, rf == NULL, TL_NULL_ARG, return excv);
+
+    // The original kernel discarded 25% of the error, here we use all of it,
+    // split it evenly, and shift the bottom kernel to the bottom left.
+    static const uint8_t kernel[SIERRA_LITE_KERNEL_SIZE] = {128, 128};
+    static size_t        idxs[SIERRA_LITE_KERNEL_SIZE] = {0, 0};
+    static bool          is_valid[SIERRA_LITE_KERNEL_SIZE] = {false, false};
+    size_t               cidx = 0;
+    uint8_t              value;
+    int16_t              delta = 0;
+    int16_t              diffuse = 0;
+
+    for (size_t y = 0; y < rf->flength; ++y) {
+        for (size_t x = 0; x < rf->fwidth; ++x) {
+            cidx = y * rf->fwidth + x;
+            value = rf->data[cidx] < 128 ? 0 : 255;
+            delta = rf->data[cidx] - value;
+            rf->data[cidx] = value;
+
+            idxs[0] = cidx + 1;
+            idxs[1] = cidx - 1 + rf->fwidth;
+            is_valid[0] = (x + 1) < rf->fwidth;
+            is_valid[1] = (x > 0) && (y + 1) < rf->flength;
+
+            for (size_t i = 0; i < SIERRA_LITE_KERNEL_SIZE; ++i) {
+                if (!is_valid[i]) {
+                    continue;
+                }
+                diffuse = rf->data[idxs[i]] + ((delta * kernel[i]) >> 8);
+                diffuse = diffuse > 0 ? diffuse : 0;
+                diffuse = diffuse < 255 ? diffuse : 255;
+                rf->data[idxs[i]] = (uint8_t)diffuse;
+            }
+        }
+    }
+    return excv;
 }
 
 static tl_result apply_dither(
@@ -713,6 +802,7 @@ static tl_result apply_dither(
         dither_funcs[DTH_BAYER_4X4] = bayer_4x4;
         dither_funcs[DTH_BLUE] = blue_dth;
         dither_funcs[DTH_HALFTONE] = halftone;
+        dither_funcs[DTH_SIERRA_LITE] = sierra_lite;
         setup = false;
     }
     TRY(excv, dither_funcs[dmode](ext_data, rframe), return excv);
