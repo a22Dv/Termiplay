@@ -249,7 +249,8 @@ tl_result create_player(
     set_atomic_size_t(&pl->awrite_idx, 0);
     set_atomic_size_t(&pl->vwrite_idx, 0);
     set_atomic_size_t(&pl->vread_idx, 0);
-    set_atomic_size_t(&pl->dither_mode, DTH_BLUE); 
+    set_atomic_size_t(&pl->dither_mode, DTH_BAYER_16X16);
+    set_atomic_size_t(&pl->color_mode, CLM_WHITE);
     set_atomic_size_t(&pl->ext_assets_ptr, 0);
     InitializeSRWLock(&pl->srw_mclock);
     pl->active_threads = 0;
@@ -388,9 +389,8 @@ void destroy_player(player **pl_ptr) {
             destroy_conframe(&(*pl_ptr)->video_rbuffer[i]);
         }
     }
-    void *extasst = _InterlockedExchangePointer(
-        (volatile PVOID *)&((*pl_ptr)->ext_assets_ptr), NULL
-    );
+    void *extasst =
+        _InterlockedExchangePointer((volatile PVOID *)&((*pl_ptr)->ext_assets_ptr), NULL);
     free(extasst);
     free((*pl_ptr)->video_rbuffer);
     free((*pl_ptr)->audio_rbuffer);
@@ -415,6 +415,118 @@ void destroy_rawframe(raw_frame **frame_ptr) {
     free((*frame_ptr)->data);
     free(*frame_ptr);
     *frame_ptr = NULL;
+}
+
+void playback_stats(player *pl) {
+    static char       *dthrepr = "";
+    static char       *clmrepr = "";
+    static dither_mode stored_dth = DTH_MODES;
+    static color_mode  stored_clm = CLM_COUNT;
+    AcquireSRWLockShared(&pl->srw_mclock);
+    const double main_clock = get_atomic_double(&pl->main_clock);
+    ReleaseSRWLockShared(&pl->srw_mclock);
+    COORD c = {.X = 0, .Y = 0};
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), c);
+
+    if (pl->dither_mode != stored_dth) {
+        switch ((dither_mode)get_atomic_size_t(&pl->dither_mode)) {
+        case DTH_BAYER_4X4:
+            dthrepr = "BAYER 4x4";
+            break;
+        case DTH_BLUE:
+            dthrepr = "BLUE";
+            break;
+        case DTH_FLOYD_STEINBERG:
+            dthrepr = "FLOYD-STEINBERG";
+            break;
+        case DTH_HALFTONE:
+            dthrepr = "HALFTONE";
+            break;
+        case DTH_SIERRA_LITE:
+            dthrepr = "SIERRA-LITE";
+            break;
+        case DTH_THRESHOLDING:
+            dthrepr = "DISABLED";
+            break;
+        case DTH_BAYER_8X8:
+            dthrepr = "BAYER 8x8";
+            break;
+        case DTH_BAYER_16X16:
+            dthrepr = "BAYER 16x16";
+            break;
+        default:
+            dthrepr = "UNHANDLED DITHER MODE";
+            break;
+        }
+        stored_dth = (dither_mode)pl->dither_mode;
+    }
+    if (pl->color_mode != stored_clm) {
+        switch ((color_mode)get_atomic_size_t(&pl->color_mode)) {
+        case CLM_DARK_BLUE:
+            clmrepr = "DARK BLUE  ";
+            break;
+        case CLM_DARK_GREEN:
+            clmrepr = "DARK GREEN  ";
+            break;
+        case CLM_DARK_CYAN:
+            clmrepr = "DARK CYAN   ";
+            break;
+        case CLM_DARK_RED:
+            clmrepr = "DARK RED    ";
+            break;
+        case CLM_DARK_MAGENTA:
+            clmrepr = "DARK MAGENTA";
+            break;
+        case CLM_DARK_YELLOW:
+            clmrepr = "DARK YELLOW ";
+            break;
+        case CLM_GRAY:
+            clmrepr = "GRAY        ";
+            break;
+        case CLM_DARK_GRAY:
+            clmrepr = "DARK GRAY   ";
+            break;
+        case CLM_BLUE:
+            clmrepr = "BLUE        ";
+            break;
+        case CLM_GREEN:
+            clmrepr = "GREEN       ";
+            break;
+        case CLM_CYAN:
+            clmrepr = "CYAN        ";
+            break;
+        case CLM_RED:
+            clmrepr = "RED         ";
+            break;
+        case CLM_MAGENTA:
+            clmrepr = "MAGENTA     ";
+            break;
+        case CLM_YELLOW:
+            clmrepr = "YELLOW      ";
+            break;
+        case CLM_WHITE:
+            clmrepr = "WHITE       ";
+            break;
+        default:
+            clmrepr = "UNKNOWN CLM ";
+            break;
+        }
+        stored_clm = (color_mode)get_atomic_size_t(&pl->color_mode);
+    }
+
+    fprintf(
+        stdout,
+        "PLAYING: %s | "
+        "LOOPING: %s | "
+        "MUTED: %s | "
+        "TIMESTAMP: %.2lf | "
+        "VOLUME: %u | "
+        "DITHERING: %s | "
+        "COLOR: %s                     \n",
+        get_atomic_bool(&pl->playing) ? "Y" : "N", get_atomic_bool(&pl->looping) ? "Y" : "N",
+        get_atomic_bool(&pl->muted) ? "Y" : "N", main_clock,
+        (uint8_t)(get_atomic_double(&pl->volume) * 100.0), dthrepr, clmrepr
+    );
 }
 
 void state_print(player *pl) {

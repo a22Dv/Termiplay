@@ -53,18 +53,20 @@ typedef int16_t         s16_le;
 #define GBUFFER_BSIZE 500      // Generic buffer size.
 #define GLBUFFER_BSIZE 1000    // Generic long buffer size.
 #define GWVBUFFER_BSIZE 550000 // Generic work video buffer size. 550KB
-#define VBUFFER_BSIZE V_FPS * sizeof(con_frame *)
+#define VBUFFER_BSIZE (V_FPS - 25) * sizeof(con_frame *)
 #define ABUFFER_BSIZE A_SAMP_RATE / 5 * A_CHANNELS * sizeof(s16_le)
 #define ASTREAM_BSIZE ABUFFER_BSIZE
 
 #define MAXIMUM_RESOLUTION_WIDTH 1920
 #define MAXIMUM_RESOLUTION_HEIGHT 1080
-#define MAXIMUM_BUFFER_SIZE 2073600 // 1920 * 1080.
+#define MAXIMUM_BUFFER_SIZE 3110400 // 2160 * 1440.
 #define COLOR_CHANNEL_COUNT 1
 #define BRAILLE_CHAR_DOT_LN 4
 #define BRAILLE_CHAR_DOT_WDTH 2
 #define BRAILLE_DOTS_PER_CHAR 8
 #define BAYER_4X4_MATRIX_SIZE 16
+#define BAYER_8X8_MATRIX_SIZE 64
+#define BAYER_16X16_MATRIX_SIZE 256
 #define FLOYD_STEINBERG_KERNEL_SIZE 4
 #define HALFTONE_MATRIX_SIZE 16
 #define SIERRA_LITE_KERNEL_SIZE 2
@@ -97,19 +99,41 @@ typedef enum key_code {
     M,         // Mute.
     G,         // Debug print.
     D,         // Switch dithering modes.
+    R,         // Switch color modes.
     Q          // Shutdown.
 } key_code;
 
 /// @brief Dithering modes.
 typedef enum dither_mode {
-    DTH_BLUE,
-    DTH_SIERRA_LITE,
-    DTH_BAYER_4X4,
-    DTH_HALFTONE,
+    DTH_BAYER_16X16,
     DTH_FLOYD_STEINBERG,
+    DTH_HALFTONE,
+    DTH_BLUE,
+    DTH_BAYER_8X8,
+    DTH_BAYER_4X4,
+    DTH_SIERRA_LITE,
     DTH_THRESHOLDING,
     DTH_MODES
 } dither_mode;
+
+typedef enum color_mode {
+    CLM_DARK_BLUE = 0b0001,
+    CLM_DARK_GREEN = 0b0010,
+    CLM_DARK_CYAN = 0b0011,
+    CLM_DARK_RED = 0b0100,
+    CLM_DARK_MAGENTA = 0b0101,
+    CLM_DARK_YELLOW = 0b0110, // Can appear brown-ish.
+    CLM_GRAY = 0b0111,
+    CLM_DARK_GRAY = 0b1000,
+    CLM_BLUE = 0b1001,
+    CLM_GREEN = 0b1010,
+    CLM_CYAN = 0b1011,
+    CLM_RED = 0b1100,
+    CLM_MAGENTA = 0b1101,
+    CLM_YELLOW = 0b1110,
+    CLM_WHITE = 0b1111,
+    CLM_COUNT
+} color_mode;
 
 /// @brief Media metadata.
 typedef struct media_mtdta {
@@ -153,6 +177,7 @@ typedef struct player {
     atomic_double_t volume;
     atomic_double_t seek_speed;
     atomic_size_t   dither_mode;
+    atomic_size_t   color_mode;
     atomic_size_t   serial; // Data versioning.
     atomic_size_t   aread_idx;
     atomic_size_t   awrite_idx;

@@ -23,6 +23,7 @@ tl_result player_exec(
     audio hardware reacts. A silent cut of the first fractions of a second
     will happen especially with old Bluetooth devices.
     */
+
     set_atomic_bool(&pl->looping, true);
     set_atomic_bool(&pl->playing, true);
     set_atomic_double(&pl->volume, 0.5);
@@ -82,6 +83,9 @@ void get_input(key_code *kc) {
         case 'd':
             *kc = D;
             break;
+        case 'r':
+            *kc = R;
+            break;
         default:
             *kc = NO_INPUT;
             break;
@@ -124,6 +128,7 @@ tl_result process_input(
     static double                     spdl_unbounded = 0.0;
     static double                     spdr_unbounded = 0.0;
     static bool                       startup = true;
+    static bool                       playback_stats_set = true;
     static CONSOLE_SCREEN_BUFFER_INFO set_csbi;
 
     if (startup) {
@@ -165,6 +170,9 @@ tl_result process_input(
     if (get_atomic_bool(&pl->shutdown)) {
         return excv;
     }
+    if (!get_atomic_bool(&pl->debug_print)) {
+        playback_stats(pl);
+    }
     switch (kc) {
     case Q:
         set_atomic_bool(&pl->shutdown, true);
@@ -179,13 +187,23 @@ tl_result process_input(
         flip_atomic_bool(&pl->looping);
         break;
     case ARR_UP:
-        if (get_atomic_double(&pl->volume) + 0.02 <= 1.0) {
-            add_atomic_double(&pl->volume, 0.02);
+        set_atomic_double(
+            &pl->volume, get_atomic_double(&pl->volume) + 0.02 < 1.01
+                             ? get_atomic_double(&pl->volume) + 0.02
+                             : 1.0
+        );
+        if (!get_atomic_bool(&pl->debug_print)) {
+            playback_stats(pl);
         }
         break;
     case ARR_DOWN:
-        if (get_atomic_double(&pl->volume) - 0.02 >= 0) {
-            add_atomic_double(&pl->volume, -0.02);
+        set_atomic_double(
+            &pl->volume, get_atomic_double(&pl->volume) - 0.02 > -0.01
+                             ? get_atomic_double(&pl->volume) - 0.02
+                             : 0.0
+        );
+        if (!get_atomic_bool(&pl->debug_print)) {
+            playback_stats(pl);
         }
         break;
     case ARR_LEFT:
@@ -203,6 +221,9 @@ tl_result process_input(
             set_atomic_double(&pl->main_clock, 0.0);
         }
         ReleaseSRWLockExclusive(&pl->srw_mclock);
+        if (!get_atomic_bool(&pl->debug_print)) {
+            playback_stats(pl);
+        }
         seek_length_s += POLLING_RATE_S;
         break;
     case ARR_RIGHT:
@@ -216,19 +237,30 @@ tl_result process_input(
         set_atomic_double(&pl->seek_speed, spdr_unbounded > 480.0 ? 480.0 : spdr_unbounded);
         add_atomic_double(&pl->main_clock, ssr);
         ReleaseSRWLockExclusive(&pl->srw_mclock);
+        if (!get_atomic_bool(&pl->debug_print)) {
+            playback_stats(pl);
+        }
         seek_length_s += POLLING_RATE_S;
         break;
     case G:
         flip_atomic_bool(&pl->debug_print);
         break;
     case D:
-        const size_t cmode = get_atomic_size_t(&pl->dither_mode);
-        if (cmode == DTH_MODES - 1) {
+        const size_t dth_cmode = get_atomic_size_t(&pl->dither_mode);
+        if (dth_cmode == DTH_MODES - 1) {
             set_atomic_size_t(&pl->dither_mode, 0);
         } else {
             add_atomic_size_t(&pl->dither_mode, 1);
         }
         break;
+    case R:
+        const size_t clr_cmode = get_atomic_size_t(&pl->color_mode);
+        if (clr_cmode == 1) {
+            set_atomic_size_t(&pl->color_mode, CLM_WHITE);
+        } else {
+             const int8_t clr_nmode = (int8_t)clr_cmode - 1;
+             set_atomic_size_t(&pl->color_mode, clr_nmode);
+        }
     case NO_INPUT:
         set_atomic_double(&pl->seek_speed, 0.0);
         set_atomic_bool(&pl->invalidated, false);

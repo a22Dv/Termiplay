@@ -155,6 +155,10 @@ void destroy_conframe(con_frame **frame_ptr);
 /// @param frame_ptr Address of pointer to frame struct.
 void destroy_rawframe(raw_frame **frame_ptr);
 
+/// @brief Prints playback information to console.
+/// @param pl Player struct.
+void playback_stats(player *pl);
+
 /// @brief Prints player state to console.
 /// @param pl Player struct.
 void state_print(player* pl);

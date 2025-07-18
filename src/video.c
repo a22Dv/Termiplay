@@ -5,14 +5,10 @@
 #include "tl_utils.h"
 #include "tl_video.h"
 
-/// TODO: ALREADY INITIALIZED bug whenever frames take way too long.
-/// Finish Halftone algorithm, if time permits use a frame pool instead.
-/// Take all pointer acquisitions and use InterlockedExchangePointer instead.
-/// to eliminate race condition bugs in the buffer. Limit frame buffer size to
-/// 15 to increase responsiveness to stylistic changes.
-/// Add Sierra-Lite error diffuseusion algorithm
-/// Change access and entry point every frame
-/// to prevent static dots at runtime for Blue noise dithering.
+/// NOTE: This implementation (malloc in a loop ring buffer) works fine,
+/// but for future reference it would be better if you forgo
+/// frame compression, as the buffer is extremely tight now,
+/// for stability, and turn to a frame pool instead in that ring buffer.
 
 static tl_result get_new_ffmpeg_instance(
     const double      clock_start,
@@ -82,6 +78,7 @@ tl_result vpthread_exec(thread_data *data) {
     staging_frame->flength = 0;
     staging_frame->fwidth = 0;
 
+    con_frame *frame = NULL;
     while (true) {
         if (get_atomic_bool(&pl->shutdown)) {
             break;
@@ -135,14 +132,19 @@ tl_result vpthread_exec(thread_data *data) {
             if (staging_frame->flength == 0 && staging_frame->fwidth == 0) {
                 break;
             }
+            frame = NULL;
             TRY(excv,
                 get_con_frame(
                     bounds, frametime_start, frame_number, get_atomic_size_t(&pl->dither_mode),
                     (void **)&(pl->ext_assets_ptr), wrk_buffer, compress_wbuffer, staging_frame,
-                    &pl->video_rbuffer[get_atomic_size_t(&pl->vwrite_idx)]
+                    &frame
                 ),
                 goto epilogue);
             frame_number++;
+            _InterlockedExchangePointer(
+                &pl->video_rbuffer[get_atomic_size_t(&pl->vwrite_idx)], frame
+            );
+            frame = NULL;
             set_atomic_size_t(&pl->vwrite_idx, nwrite_idx);
         }
         if (feof(ffmpeg_stream)) {
@@ -160,6 +162,9 @@ epilogue:
     if (ffmpeg_stream) {
         _pclose(ffmpeg_stream);
         ffmpeg_stream = NULL;
+    }
+    if (frame) {
+        destroy_conframe(&frame);
     }
     destroy_rawframe(&staging_frame);
     free(bounds);
@@ -184,8 +189,8 @@ static tl_result get_new_ffmpeg_instance(
 
     int swret = swprintf_s(
         cmd, GBUFFER_BSIZE,
-        L"ffmpeg -v quiet -ss %lf -i \"%ls\" -an -s %zux%zu -f rawvideo -pix_fmt gray -",
-        clock_start, media_path, bounds->log_wdth, bounds->log_ln
+        L"ffmpeg -v quiet -ss %lf -i \"%ls\" -an -s %zux%zu -f rawvideo -r %u -pix_fmt gray -",
+        clock_start, media_path, bounds->log_wdth, bounds->log_ln, V_FPS
     );
     CHECK(excv, swret < 0, TL_FORMAT_FAILURE, return excv);
 
@@ -209,16 +214,15 @@ static tl_result get_raw_frame(
     size_t     px_wdth = bounds->log_wdth;
     size_t     px_ln = bounds->log_ln;
     raw_frame *out = *f_out;
-    size_t     px_ret = fread(out->data, sizeof(uint8_t), px_wdth * px_ln, ffmpeg_stream);
 
-    // End of video when 0 bytes not handled.
-    // Weirdly enough doesn't crash though. Just keep note.
+    size_t px_ret = fread(out->data, sizeof(uint8_t), px_wdth * px_ln, ffmpeg_stream);
+
+    // End of video when 0 bytes.
     if (feof(ffmpeg_stream)) {
         rf->flength = 0;
         rf->fwidth = 0;
         return excv;
     }
-
     CHECK(excv, px_ret != px_wdth * px_ln, TL_INCOMPLETE_DATA, return excv);
     out->flength = px_ln;
     out->fwidth = px_wdth;
@@ -255,8 +259,6 @@ static tl_result get_con_frame(
     cframe->x_start = bounds->start_col;
     cframe->y_start = bounds->start_row;
 
-    // INSERT HERE:
-    // TODO: Floyd-Steinberg dithering. Edit raw_frame* raw before passing to braille converter.
     TRY(excv, apply_dither(ext_data, dmode, raw), goto epilogue);
 
     const size_t total_chars = cframe->flength * cframe->fwidth;
@@ -321,7 +323,8 @@ static tl_result get_console_bounds(
 
     con_bounds *b = *out;
 
-    b->cell_ln = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    // We make this shorter by 1 so that we have space for playback info at the top.
+    b->cell_ln = csbi.srWindow.Bottom - csbi.srWindow.Top;
     b->cell_wdth = csbi.srWindow.Right - csbi.srWindow.Left + 1;
     b->abs_conln = b->cell_ln;
     b->abs_conwdth = b->cell_wdth;
@@ -368,7 +371,7 @@ static wchar_t map_to_braille(uint8_t *map) {
 
 tl_result vcthread_exec(thread_data *data) {
     static const size_t vbuffer_frames = VBUFFER_BSIZE / sizeof(con_frame *);
-    static const COORD  hm = {.X = 0, .Y = 0};
+    static const COORD  hm = {.X = 0, .Y = 1};
 
     tl_result   excv = TL_SUCCESS;
     player     *pl = data->player;
@@ -439,6 +442,7 @@ tl_result vcthread_exec(thread_data *data) {
         // We need to take ownership of frame
         const con_frame *frame = _InterlockedExchangePointer((PVOID volatile *)&fbuf[vread], NULL);
         const size_t     tchars = frame->flength * frame->fwidth;
+        
         if (conbuf == NULL || frame->flength != conbuf_size.Y || frame->fwidth != conbuf_size.X) {
             free(conbuf);
             conbuf = malloc(frame->flength * frame->fwidth * sizeof(CHAR_INFO));
@@ -446,16 +450,12 @@ tl_result vcthread_exec(thread_data *data) {
             conbuf_size.X = (SHORT)frame->fwidth;
             conbuf_size.Y = (SHORT)frame->flength;
             write_region.Left = (SHORT)frame->x_start;
-            write_region.Top = (SHORT)frame->y_start;
+
+            // + 1 to make sure the frame doesn't overlap with the stat print.
+            write_region.Top = (SHORT)frame->y_start + 1;
             write_region.Right = (SHORT)(frame->x_start + frame->fwidth - 1);
             write_region.Bottom = (SHORT)(frame->y_start + frame->flength - 1);
-            for (size_t i = 0; i < tchars; ++i) {
-                conbuf[i].Attributes = 0; // Clear garbage data from malloc().
-                conbuf[i].Attributes |= FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
-                conbuf[i].Attributes &= ~(BACKGROUND_BLUE | BACKGROUND_GREEN | BACKGROUND_RED);
-            }
         }
-
         const double pts = frame->pts;
         AcquireSRWLockShared(&pl->srw_mclock);
         const double clock = get_atomic_double(&pl->main_clock);
@@ -477,6 +477,13 @@ tl_result vcthread_exec(thread_data *data) {
         CHECK(excv, lz4_dret == 0, TL_COMPRESS_ERR, goto epilogue);
         for (size_t i = 0; i < tchars; ++i) {
             conbuf[i].Char.UnicodeChar = uncomp_fbuffer[i];
+        }
+        const DWORD clr_mode = (DWORD)get_atomic_size_t(&pl->color_mode);
+        for (size_t i = 0; i < tchars; ++i) {
+
+            // Background color is implicit black/default from attributes set to 0.
+            conbuf[i].Attributes = 0;
+            conbuf[i].Attributes |= clr_mode;
         }
         CHECK(
             excv, !WriteConsoleOutputW(stdouth, conbuf, conbuf_size, hm, &write_region),
@@ -524,30 +531,24 @@ static tl_result flyd_stnbrg(
     void     **_ext_data,
     raw_frame *rf
 ) {
-    /// BUG: Fix `ALREADY INITIALIZED` non-NULL pointer frame bug when frame time takes way too
-    /// long. Possibly acquisition race conditions. Fix with InterlockedPointerExchange. Double
-    /// check index calculations.
-
-    // Holy performance hog. This can crash the entire thing if each frame takes way too long.
-    // though that might also be attributed to crappier architecture.
-
     tl_result excv = TL_SUCCESS;
     CHECK(excv, rf == NULL, TL_NULL_ARG, return excv);
-    static const float kernel[FLOYD_STEINBERG_KERNEL_SIZE] = {
-        (float)7 / 16, (float)3 / 16, (float)5 / 16, (float)1 / 16
+    static const uint8_t kernel[FLOYD_STEINBERG_KERNEL_SIZE] = {
+        (uint8_t)(256 * (float)7 / 16), (uint8_t)(256 * (float)3 / 16),
+        (uint8_t)(256 * (float)3 / 16), (uint8_t)(256 * (float)3 / 16)
     };
     static size_t idxs[FLOYD_STEINBERG_KERNEL_SIZE] = {0, 0, 0, 0};
     static bool   is_valid[FLOYD_STEINBERG_KERNEL_SIZE] = {false, false, false, false};
     size_t        cidx = 0;
-    uint8_t       value;
-    float         delta = 0.0;
-    float         diffuse = 0.0;
+    uint8_t       value = 0;
+    int16_t       delta = 0;
+    int16_t       diffuse = 0;
 
     for (size_t y = 0; y < rf->flength; ++y) {
         for (size_t x = 0; x < rf->fwidth; ++x) {
             cidx = y * rf->fwidth + x;
             value = rf->data[cidx] < 128 ? 0 : 255;
-            delta = (float)(rf->data[cidx] - (int)value);
+            delta = rf->data[cidx] - value;
             rf->data[cidx] = value;
 
             idxs[0] = cidx + 1;
@@ -556,7 +557,7 @@ static tl_result flyd_stnbrg(
             idxs[3] = cidx + 1 + rf->fwidth;
 
             is_valid[0] = (x + 1) < rf->fwidth;
-            is_valid[1] = (x > 0) < rf->fwidth && (y + 1) < rf->flength;
+            is_valid[1] = x > 0 && (y + 1) < rf->flength;
             is_valid[2] = (y + 1) < rf->flength;
             is_valid[3] = (x + 1) < rf->fwidth && (y + 1) < rf->flength;
 
@@ -564,46 +565,14 @@ static tl_result flyd_stnbrg(
                 if (!is_valid[i]) {
                     continue;
                 }
-                diffuse = rf->data[idxs[i]] + delta * kernel[i];
-                diffuse = diffuse > 0.0f ? diffuse : 0.0f;
-                diffuse = diffuse < 255.0f ? diffuse : 255.0f;
+                diffuse = rf->data[idxs[i]] + ((delta * kernel[i]) >> 8);
+                diffuse = diffuse > 0 ? diffuse : 0;
+                diffuse = diffuse < 255 ? diffuse : 255;
                 rf->data[idxs[i]] = (uint8_t)diffuse;
             }
         }
     }
     return excv;
-}
-
-static tl_result bayer_4x4(
-    void     **_ext_data,
-    raw_frame *rf
-) {
-    tl_result excv = TL_SUCCESS;
-    CHECK(excv, rf == NULL, TL_NULL_ARG, return excv);
-
-    // The mathematical bayer matrix was supposed to have 0 at the first entry (0, 0)
-    // but I changed it to have a threshold of 1 for aesthetic purposes allowing for deep blacks.
-    static const uint8_t matrix[BAYER_4X4_MATRIX_SIZE] = {
-        (uint8_t)(255 * 1 / (double)16),  (uint8_t)(255 * 8 / (double)16),
-        (uint8_t)(255 * 2 / (double)16),  (uint8_t)(255 * 10 / (double)16),
-        (uint8_t)(255 * 12 / (double)16), (uint8_t)(255 * 4 / (double)16),
-        (uint8_t)(255 * 14 / (double)16), (uint8_t)(255 * 6 / (double)16),
-        (uint8_t)(255 * 3 / (double)16),  (uint8_t)(255 * 11 / (double)16),
-        (uint8_t)(255 * 1 / (double)16),  (uint8_t)(255 * 9 / (double)16),
-        (uint8_t)(255 * 15 / (double)16), (uint8_t)(255 * 7 / (double)16),
-        (uint8_t)(255 * 13 / (double)16), (uint8_t)(255 * 5 / (double)16),
-    };
-    uint8_t  threshold_idx = 0;
-    size_t   data_idx = 0;
-    uint8_t *data = rf->data;
-    for (size_t y = 0; y < rf->flength; ++y) {
-        for (size_t x = 0; x < rf->fwidth; ++x) {
-            data_idx = y * rf->fwidth + x;
-            threshold_idx = ((y & 3) << 2) | (x & 3);
-            data[data_idx] = matrix[threshold_idx] > data[data_idx] ? 0 : 255;
-        }
-    }
-    return TL_SUCCESS;
 }
 
 static tl_result blue_dth(
@@ -716,8 +685,7 @@ static tl_result halftone(
     tl_result excv = TL_SUCCESS;
     CHECK(excv, rf == NULL, TL_NULL_ARG, return excv);
 
-    // We use a spiral pattern dither here, with the lowest threshold
-    // set to 1 instead of 0 to preserve deep blacks.
+    // We use a spiral pattern dither here.
     static const uint8_t matrix[HALFTONE_MATRIX_SIZE] = {
         (uint8_t)(255 * 10 / (double)16), (uint8_t)(255 * 9 / (double)16),
         (uint8_t)(255 * 8 / (double)16),  (uint8_t)(255 * 7 / (double)16),
@@ -785,6 +753,99 @@ static tl_result sierra_lite(
     return excv;
 }
 
+static tl_result bayer_4x4(
+    void     **_ext_data,
+    raw_frame *rf
+) {
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, rf == NULL, TL_NULL_ARG, return excv);
+
+    // The mathematical bayer matrix was supposed to have 0 at the first entry (0, 0)
+    // but I changed it to have a threshold of 1 for aesthetic purposes allowing for deep blacks.
+    static const uint8_t matrix[BAYER_4X4_MATRIX_SIZE] = {15, 127, 31, 159, 191, 63,  223, 95,
+                                                          47, 175, 15, 143, 239, 111, 207, 79};
+
+    uint8_t  threshold_idx = 0;
+    size_t   data_idx = 0;
+    uint8_t *data = rf->data;
+    for (size_t y = 0; y < rf->flength; ++y) {
+        for (size_t x = 0; x < rf->fwidth; ++x) {
+            data_idx = y * rf->fwidth + x;
+            threshold_idx = ((y & 3) << 2) | (x & 3);
+            data[data_idx] = matrix[threshold_idx] > data[data_idx] ? 0 : 255;
+        }
+    }
+    return TL_SUCCESS;
+}
+
+static tl_result bayer_8x8(
+    void     **_ext_data,
+    raw_frame *rf
+) {
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, rf == NULL, TL_NULL_ARG, return excv);
+
+    // The mathematical bayer matrix was supposed to have 0
+    // but I changed it to have a threshold of 1 for aesthetic purposes allowing for deep blacks.
+    static const uint8_t matrix[BAYER_8X8_MATRIX_SIZE] = {
+        3,  127, 31, 159, 7,  135, 39, 167, 191, 63,  223, 95,  199, 71,  231, 103,
+        47, 175, 15, 143, 55, 183, 23, 151, 239, 111, 207, 79,  247, 119, 215, 87,
+        11, 139, 43, 171, 3,  131, 35, 163, 203, 75,  235, 107, 195, 67,  227, 99,
+        59, 187, 27, 155, 51, 179, 19, 147, 251, 123, 219, 91,  243, 115, 211, 83
+    };
+
+    uint8_t  threshold_idx = 0;
+    size_t   data_idx = 0;
+    uint8_t *data = rf->data;
+    for (size_t y = 0; y < rf->flength; ++y) {
+        for (size_t x = 0; x < rf->fwidth; ++x) {
+            data_idx = y * rf->fwidth + x;
+            threshold_idx = ((y & 7) << 3) | (x & 7);
+            data[data_idx] = matrix[threshold_idx] > data[data_idx] ? 0 : 255;
+        }
+    }
+    return TL_SUCCESS;
+}
+
+static tl_result bayer_16x16(
+    void     **_ext_data,
+    raw_frame *rf
+) {
+    tl_result excv = TL_SUCCESS;
+    CHECK(excv, rf == NULL, TL_NULL_ARG, return excv);
+
+    // The mathematical bayer matrix was supposed to have 0
+    // but I changed it to have a threshold of 1 for aesthetic purposes allowing for deep blacks.
+    static const uint8_t matrix[BAYER_16X16_MATRIX_SIZE] = {
+        0,   128, 32,  160, 8,   136, 40,  168, 2,   130, 34,  162, 10,  138, 42,  170, 192, 64,
+        224, 96,  200, 72,  232, 104, 194, 66,  226, 98,  202, 74,  234, 106, 48,  176, 16,  144,
+        56,  184, 24,  152, 50,  178, 18,  146, 58,  186, 26,  154, 240, 112, 208, 80,  248, 120,
+        216, 88,  242, 114, 210, 82,  250, 122, 218, 90,  12,  140, 44,  172, 4,   132, 36,  164,
+        14,  142, 46,  174, 6,   134, 38,  166, 204, 76,  236, 108, 196, 68,  228, 100, 206, 78,
+        238, 110, 198, 70,  230, 102, 60,  188, 28,  156, 52,  180, 20,  148, 62,  190, 30,  158,
+        54,  182, 22,  150, 252, 124, 220, 92,  244, 116, 212, 84,  254, 126, 222, 94,  246, 118,
+        214, 86,  3,   131, 35,  163, 11,  139, 43,  171, 1,   129, 33,  161, 9,   137, 41,  169,
+        195, 67,  227, 99,  203, 75,  235, 107, 197, 69,  229, 101, 205, 77,  237, 109, 51,  179,
+        19,  147, 59,  187, 27,  155, 49,  177, 17,  145, 57,  185, 25,  153, 243, 115, 211, 83,
+        251, 123, 219, 91,  241, 113, 209, 81,  249, 121, 217, 89,  15,  143, 47,  175, 7,   135,
+        39,  167, 13,  141, 45,  173, 5,   133, 37,  165, 207, 79,  239, 111, 199, 71,  231, 103,
+        209, 81,  241, 113, 201, 73,  233, 105, 63,  191, 31,  159, 55,  183, 23,  151, 61,  189,
+        29,  157, 53,  181, 21,  149, 255, 127, 223, 95,  247, 119, 215, 87,  253, 125, 221, 93,
+        245, 117, 213, 85
+    };
+    uint8_t  threshold_idx = 0;
+    size_t   data_idx = 0;
+    uint8_t *data = rf->data;
+    for (size_t y = 0; y < rf->flength; ++y) {
+        for (size_t x = 0; x < rf->fwidth; ++x) {
+            data_idx = y * rf->fwidth + x;
+            threshold_idx = ((y & 15) << 4) | (x & 15);
+            data[data_idx] = matrix[threshold_idx] >= data[data_idx] ? 0 : 255;
+        }
+    }
+    return TL_SUCCESS;
+}
+
 static tl_result apply_dither(
     void            **ext_data,
     const dither_mode dmode,
@@ -800,6 +861,8 @@ static tl_result apply_dither(
         dither_funcs[DTH_THRESHOLDING] = threshold;
         dither_funcs[DTH_FLOYD_STEINBERG] = flyd_stnbrg;
         dither_funcs[DTH_BAYER_4X4] = bayer_4x4;
+        dither_funcs[DTH_BAYER_8X8] = bayer_8x8;
+        dither_funcs[DTH_BAYER_16X16] = bayer_16x16;
         dither_funcs[DTH_BLUE] = blue_dth;
         dither_funcs[DTH_HALFTONE] = halftone;
         dither_funcs[DTH_SIERRA_LITE] = sierra_lite;
