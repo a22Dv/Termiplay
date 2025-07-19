@@ -6,8 +6,7 @@
 A terminal media player written in C.
 
 
-**Termiplay** uses braille characters and an assortment of dithering algorithms to present high-fidelity
-video despite the constraints that come with being in a terminal.
+**Termiplay** uses braille characters and an assortment of dithering algorithms to present high-fidelity video right in the terminal.
 
 ![Your Idol BW BAYER](./public/your_idol_bayer16.gif)
 ## Installation
@@ -31,11 +30,11 @@ Go to the path where you extracted the archive and run to start with.
 ./termiplay "<PATH TO MEDIA FILE>"
 ```
 
-This player accepts a variety of media files, from .mp3s, .mp4s, and so on. if it is supported by FFmpeg, it's going to do just fine.
+This player accepts a variety of media files, from .mp3s, .mp4s, and so on.
 
 >[!NOTE]
 > This player's behavior when it comes to multi-stream media files
-> are undefined as it still hasn't been tested for those.
+> is undefined as it still hasn't been tested.  
 
 To control the player:
 
@@ -54,14 +53,15 @@ Q - Quit
 ```
 
 >[!WARNING]
-> This player can be freely resized and it will accomodate accordingly.
+> The terminal window can be freely resized and it will accomodate accordingly.
 > Do keep in mind that it has hard limits on how big each frame
-> can be. Exceedingly large frame sizes beyond >1000x400 increases
+> can be. Large frame sizes beyond >900x300 character cells, (1800px by 1200px) increases
 > the chances of the player destabilizing. This is especially the case
 > for Floyd-Steinberg as it is computationally expensive. Although
-> the specific limit depends on your system's capabilities, this player
+> the specific limit depends on your system's capabilities, it
 > still doesn't allow any frame larger than 1440p. As this is a hard
-> limit set by the buffer size for each frame. This limit will almost never
+> limit set by the buffer size for each frame. And will forcibly
+> quit the player when reached. This limit will almost never
 > be reached in regular use-cases.
 
 ## Features
@@ -77,6 +77,10 @@ Q - Quit
     - Bayer 8x8
     - Bayer 4x4
     - Halftone
+
+>[!TIP]
+> Most of the dithering algorithms here have an effective resolution where they
+> look best. Try to change the font size to change the resolution of the video presented.
 
 ## License
 
